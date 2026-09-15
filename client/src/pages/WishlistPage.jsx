@@ -9,10 +9,10 @@ const WishlistPage = ({ onToast }) => {
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-950 text-white">
+      <div className="min-h-screen flex items-center justify-center bg-slate-50 text-slate-900">
         <div className="flex flex-col items-center gap-3">
           <div className="w-10 h-10 border-4 border-brand-500 border-t-transparent rounded-full animate-spin"></div>
-          <p className="text-sm font-medium text-slate-400">Loading your saved wishlist...</p>
+          <p className="text-sm font-medium text-slate-500">Loading your saved wishlist...</p>
         </div>
       </div>
     );
@@ -21,16 +21,16 @@ const WishlistPage = ({ onToast }) => {
   if (wishlist.length === 0) {
     return (
       <div className="max-w-4xl mx-auto px-4 py-20 text-center space-y-6">
-        <div className="w-20 h-20 rounded-3xl bg-slate-900 border border-slate-800 text-rose-400 flex items-center justify-center mx-auto">
+        <div className="w-20 h-20 rounded-3xl bg-white border border-slate-200 text-rose-500 flex items-center justify-center mx-auto shadow-sm">
           <Heart size={40} />
         </div>
         <div className="space-y-2">
-          <h2 className="text-2xl font-extrabold text-white">Your Wishlist is Empty</h2>
-          <p className="text-sm text-slate-400 max-w-md mx-auto">
+          <h2 className="text-2xl font-extrabold text-slate-900">Your Wishlist is Empty</h2>
+          <p className="text-sm text-slate-500 max-w-md mx-auto">
             Save items you love by clicking the heart icon on any product card while browsing.
           </p>
         </div>
-        <Link to="/products" className="gradient-button text-white font-bold px-8 py-3.5 rounded-2xl inline-flex items-center gap-2">
+        <Link to="/products" className="gradient-button text-white font-bold px-8 py-3.5 rounded-2xl inline-flex items-center gap-2 shadow-sm">
           <span>Explore Products</span>
           <ArrowRight size={18} />
         </Link>
@@ -41,8 +41,8 @@ const WishlistPage = ({ onToast }) => {
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10 space-y-8">
       <div>
-        <span className="text-xs font-bold uppercase tracking-wider text-rose-400">Saved Items</span>
-        <h1 className="text-3xl font-extrabold text-white">My Wishlist ({wishlist.length})</h1>
+        <span className="text-xs font-bold uppercase tracking-wider text-rose-600">Saved Items</span>
+        <h1 className="text-3xl font-extrabold text-slate-900">My Wishlist ({wishlist.length})</h1>
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">

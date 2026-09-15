@@ -36,7 +36,7 @@ function App() {
       <AuthProvider>
         <CartProvider>
           <WishlistProvider>
-            <div className="min-h-screen flex flex-col bg-slate-950 text-slate-100 selection:bg-brand-500 selection:text-white">
+            <div className="min-h-screen flex flex-col bg-slate-50 text-slate-900 selection:bg-brand-500 selection:text-white">
               
               {/* Toast Notification Alert */}
               {toast && (

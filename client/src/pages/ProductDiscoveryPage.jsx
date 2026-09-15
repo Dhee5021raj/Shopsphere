@@ -113,8 +113,8 @@ const ProductDiscoveryPage = ({ onToast }) => {
       {/* Header & Search Bar */}
       <div className="space-y-4">
         <div>
-          <span className="text-xs font-bold uppercase tracking-wider text-brand-400">Marketplace Catalog</span>
-          <h1 className="text-3xl font-extrabold text-white">Explore Products</h1>
+          <span className="text-xs font-bold uppercase tracking-wider text-emerald-600">Marketplace Catalog</span>
+          <h1 className="text-3xl font-extrabold text-slate-900">Explore Products</h1>
         </div>
         <div className="max-w-2xl">
           <SearchBar onSearch={handleSearch} initialQuery={filters.search} />
@@ -139,19 +139,19 @@ const ProductDiscoveryPage = ({ onToast }) => {
         <div className="lg:col-span-3 space-y-6">
           
           {/* Top Bar Controls */}
-          <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-4 flex flex-col sm:flex-row items-center justify-between gap-4">
-            <div className="text-xs font-medium text-slate-300">
-              Showing <span className="font-bold text-white">{totalProducts}</span> products
-              {filters.search && <span> for "<strong className="text-brand-400">{filters.search}</strong>"</span>}
+          <div className="bg-white border border-slate-200 rounded-2xl p-4 flex flex-col sm:flex-row items-center justify-between gap-4 shadow-sm">
+            <div className="text-xs font-medium text-slate-600">
+              Showing <span className="font-bold text-slate-900">{totalProducts}</span> products
+              {filters.search && <span> for "<strong className="text-emerald-600">{filters.search}</strong>"</span>}
             </div>
 
             {/* Sorting Select */}
             <div className="flex items-center gap-2 text-xs">
-              <span className="text-slate-400 font-medium">Sort by:</span>
+              <span className="text-slate-500 font-medium">Sort by:</span>
               <select
                 value={filters.sort}
                 onChange={(e) => handleFilterChange('sort', e.target.value)}
-                className="bg-slate-950 border border-slate-800 text-slate-200 text-xs rounded-xl px-3 py-2 focus:border-brand-500 focus:outline-none"
+                className="bg-slate-50 border border-slate-200 text-slate-800 text-xs rounded-xl px-3 py-2 focus:border-emerald-500 focus:outline-none"
               >
                 <option value="newest">Newest Arrivals</option>
                 <option value="price_asc">Price: Low to High</option>
@@ -170,17 +170,17 @@ const ProductDiscoveryPage = ({ onToast }) => {
               ))}
             </div>
           ) : products.length === 0 ? (
-            <div className="bg-slate-900/60 border border-slate-800 rounded-3xl p-12 text-center space-y-4">
-              <div className="w-16 h-16 rounded-2xl bg-slate-800/80 text-slate-400 flex items-center justify-center mx-auto">
+            <div className="bg-white border border-slate-200 rounded-3xl p-12 text-center space-y-4 shadow-sm">
+              <div className="w-16 h-16 rounded-2xl bg-slate-100 text-slate-400 flex items-center justify-center mx-auto">
                 <PackageX size={32} />
               </div>
-              <h3 className="text-xl font-bold text-white">No products found</h3>
-              <p className="text-xs text-slate-400 max-w-md mx-auto">
+              <h3 className="text-xl font-bold text-slate-900">No products found</h3>
+              <p className="text-xs text-slate-500 max-w-md mx-auto">
                 We couldn't find any products matching your search criteria. Try adjusting your filters or resetting search terms.
               </p>
               <button
                 onClick={handleResetFilters}
-                className="gradient-button text-white text-xs font-bold px-5 py-2.5 rounded-xl"
+                className="gradient-button text-white text-xs font-bold px-5 py-2.5 rounded-xl shadow-sm"
               >
                 Clear All Filters
               </button>
@@ -195,21 +195,21 @@ const ProductDiscoveryPage = ({ onToast }) => {
 
           {/* Pagination Controls */}
           {totalPages > 1 && (
-            <div className="flex items-center justify-center gap-2 pt-6 border-t border-slate-800">
+            <div className="flex items-center justify-center gap-2 pt-6 border-t border-slate-200">
               <button
                 onClick={() => setPage((p) => Math.max(p - 1, 1))}
                 disabled={page === 1}
-                className="p-2 rounded-xl bg-slate-900 border border-slate-800 text-slate-300 hover:text-white disabled:opacity-40 disabled:cursor-not-allowed"
+                className="p-2 rounded-xl bg-white border border-slate-200 text-slate-700 hover:text-emerald-700 shadow-sm disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 <ChevronLeft size={18} />
               </button>
-              <span className="text-xs font-semibold text-slate-300 px-4">
+              <span className="text-xs font-semibold text-slate-700 px-4">
                 Page {page} of {totalPages}
               </span>
               <button
                 onClick={() => setPage((p) => Math.min(p + 1, totalPages))}
                 disabled={page === totalPages}
-                className="p-2 rounded-xl bg-slate-900 border border-slate-800 text-slate-300 hover:text-white disabled:opacity-40 disabled:cursor-not-allowed"
+                className="p-2 rounded-xl bg-white border border-slate-200 text-slate-700 hover:text-emerald-700 shadow-sm disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 <ChevronRight size={18} />
               </button>

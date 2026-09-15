@@ -1,220 +1,687 @@
-# ShopSphere - Multi-Vendor E-Commerce Marketplace
+# ShopSphere
 
-> **Tagline**: *One Marketplace. Endless Possibilities.*
+## Multi-Vendor E-Commerce Marketplace
 
-ShopSphere is a production-quality, full-stack MERN (MongoDB, Express, React, Node.js) multi-vendor e-commerce marketplace platform. Designed specifically as an advanced database architecture demonstration, ShopSphere integrates multi-vendor order routing, role-based access control (Customer, Vendor, Admin), and deep native MongoDB features including **ACID Transactions**, **Full-Text Search Indexing**, **Compound Indexing**, **TTL Session Auto-Purging**, and **Pipeline Aggregations**.
+ShopSphere is a full-stack multi-vendor e-commerce marketplace application built using the MERN stack (MongoDB, Express.js, React, Node.js). The system enables multiple independent vendors to operate digital storefronts on a unified platform, providing customers with unified browsing, cross-vendor checkout, order status tracking, and verified reviews.
 
----
-
-## 🌟 Key Application Features
-
-### 🛍️ Customer Role
-- **Multi-Vendor Single Checkout**: Combine products from multiple independent sellers into a single cart and checkout seamlessly.
-- **Full-Text Product Discovery**: Server-side text search powered by MongoDB Text Indexes.
-- **Multi-Dimensional Filters**: Filter products simultaneously by Category, Vendor Store, Price Range, Minimum Rating, and Stock Status.
-- **Wishlist & Cart**: Persistent authenticated carts with guest cart session automatic sync upon login.
-- **Order Tracking**: Detailed item-level order history and tracking timeline (`Processing` → `Shipped` → `Delivered`).
-- **Verified Product Reviews**: Write ratings and comments enforced by verified purchase checks in MongoDB.
-
-### 🏬 Seller / Vendor Role
-- **Public Vendor Storefront**: Customizable store banner, logo, rating badge, description, and vendor catalog (`/store/:slug`).
-- **Vendor-Scoped Management**: Vendors strictly manage only their own products, inventory, and order items.
-- **Item-Level Status Updates**: Vendors independently update the status of order items belonging to their store.
-- **Native Aggregation Analytics**: Visual charts powered by MongoDB Aggregations showing Monthly Revenue and Best-Selling Products.
-
-### 🛡️ Administrator Role
-- **Marketplace Master Control**: Oversight of all platform users, vendors, products, and categories.
-- **Vendor Approval Workflow**: Approve or reject new vendor store applications.
-- **Access Control**: Block or restore customer and seller user accounts.
-- **Category Manager**: Create, edit, and delete marketplace product categories.
-- **Platform Analytics**: Gross GMV revenue trends, top revenue-generating vendors, and category distribution.
+The project is structured to demonstrate advanced database design and management concepts, implementing native MongoDB features such as multi-document ACID transactions, full-text search with relevance weighting, compound indexing, TTL (Time-To-Live) index data eviction, and multi-stage aggregation pipelines for real-time analytics.
 
 ---
 
-## 🚀 Advanced MongoDB Features Showcase (Viva Ready)
+## Table of Contents
 
-### 1. 🛡️ ACID Multi-Document Transactions
-Located in `server/controllers/checkoutController.js`:
-- During checkout, `mongoose.startSession()` and `session.startTransaction()` are invoked.
-- Verifies product availability and stock in real time.
-- Uses authoritative database pricing (never frontend prices).
-- Atomically decrements product stock and increments `soldCount`.
-- Creates the multi-vendor `Order` document and clears the user's cart.
-- If any product fails or has insufficient stock, `await session.abortTransaction()` is called, guaranteeing zero partial order states.
+- [System Features](#system-features)
+  - [Customer Management](#customer-management)
+  - [Vendor Management](#vendor-management)
+  - [Platform Administration](#platform-administration)
+- [Technology Stack](#technology-stack)
+- [Database Architecture and Advanced MongoDB Features](#database-architecture-and-advanced-mongodb-features)
+  - [1. Multi-Document ACID Transactions](#1-multi-document-acid-transactions)
+  - [2. Full-Text Search with Relevance Weighting](#2-full-text-search-with-relevance-weighting)
+  - [3. Compound Index Optimization](#3-compound-index-optimization)
+  - [4. Time-To-Live (TTL) Automatic Eviction](#4-time-to-live-ttl-automatic-eviction)
+  - [5. Aggregation Framework Pipelines](#5-aggregation-framework-pipelines)
+- [Authentication and Access Control](#authentication-and-access-control)
+- [System Architecture](#system-architecture)
+- [Project Directory Structure](#project-directory-structure)
+- [Database Models and Relationships](#database-models-and-relationships)
+- [Pre-Configured Demonstration Accounts](#pre-configured-demonstration-accounts)
+- [RESTful API Specification](#restful-api-specification)
+- [Installation and Setup](#installation-and-setup)
+  - [Prerequisites](#prerequisites)
+  - [Clone Repository](#clone-repository)
+  - [Backend Configuration](#backend-configuration)
+  - [Database Seeding](#database-seeding)
+  - [Frontend Configuration](#frontend-configuration)
+- [Environment Variables](#environment-variables)
+- [Project Scripts](#project-scripts)
+- [Project Objectives](#project-objectives)
+- [Future Scope](#future-scope)
+
+---
+
+## System Features
+
+### Customer Management
+
+- Account registration, profile management, and authentication via JSON Web Tokens (JWT).
+- Catalog exploration with search and filtering by category, vendor, price range, minimum rating, and inventory availability.
+- Persistent shopping cart for authenticated users.
+- Temporary guest shopping cart with automatic synchronization upon account login.
+- Wishlist creation and management.
+- Multi-vendor single-checkout process.
+- Order history with item-level fulfillment tracking (`Processing`, `Shipped`, `Delivered`, `Cancelled`).
+- Verified product review and rating submission restricted to confirmed buyers.
+
+### Vendor Management
+
+- Vendor registration and onboarding workflow requiring administrative verification.
+- Dedicated vendor storefront page accessible via public URL slug (`/store/:slug`).
+- Product catalog management including creation, modification, inventory tracking, and deletion.
+- Order management filtered to line items associated specifically with the authenticated vendor.
+- Independent item-level fulfillment status updating.
+- Performance reporting and revenue analysis generated via native aggregation pipelines.
+
+### Platform Administration
+
+- Centralized management of platform users, vendor profiles, catalog items, and categories.
+- Vendor verification pipeline for evaluating, approving, or rejecting new vendor applications.
+- User account status governance, including suspension and reactivation capabilities.
+- Category lifecycle management (creation, update, removal).
+- Platform-wide reporting on Gross Merchandise Value (GMV), order volume, category sales distribution, and top-performing vendors.
+
+---
+
+## Technology Stack
+
+### Frontend
+
+- **Core Library**: React 18
+- **Build Tool**: Vite
+- **Routing**: React Router 7
+- **Styling**: Tailwind CSS
+- **HTTP Client**: Axios
+- **Data Visualization**: Recharts
+- **Icons**: Lucide React
+
+### Backend
+
+- **Runtime**: Node.js (v18+)
+- **Application Framework**: Express.js
+- **Database Modeling (ODM)**: Mongoose 8
+- **Authentication**: JSON Web Tokens (jsonwebtoken), bcryptjs
+- **Middleware**: CORS, dotenv
+
+### Database and Tooling
+
+- **Database Engine**: MongoDB (Local standalone, replica set, or MongoDB Atlas)
+- **Fallback Development Database**: mongodb-memory-server
+- **Development Process Monitor**: Nodemon
+- **Version Control**: Git
+
+---
+
+## Database Architecture and Advanced MongoDB Features
+
+### 1. Multi-Document ACID Transactions
+
+**File Reference**: `server/controllers/checkoutController.js`
+
+During checkout, an order may contain products sourced from multiple independent vendors. To prevent inconsistent state (such as inventory deduction without order persistence or partial inventory deduction), the checkout workflow executes within a multi-document MongoDB transaction.
+
+The workflow coordinates the following operations:
+1. Initializes a client session via `mongoose.startSession()`.
+2. Starts an atomic transaction via `session.startTransaction()`.
+3. Validates customer identity and queries the customer's cart.
+4. Reads each product document within the transactional session to ensure authoritative inventory and pricing data.
+5. Verifies stock availability; if stock is insufficient, the transaction aborts.
+6. Decrements product inventory and increments units sold atomically.
+7. Persists the multi-vendor `Order` document.
+8. Flushes the customer's cart.
+9. Commits the transaction via `session.commitTransaction()`.
+
+If an error or constraint violation occurs at any stage, `session.abortTransaction()` is invoked, rolling back all modifications.
 
 ```javascript
 const session = await mongoose.startSession();
 session.startTransaction();
+
 try {
-  // 1. Fetch products & verify stock
-  // 2. Deduct inventory: product.stock -= item.quantity
-  // 3. Create Order document with vendor items
-  // 4. Clear Cart
+  // 1. Fetch authoritative product records within the transaction session
+  // 2. Validate current stock levels against requested line item quantities
+  // 3. Atomically decrement stock and increment soldCount
+  // 4. Create multi-vendor Order document
+  // 5. Clear customer Cart document
+
   await session.commitTransaction();
 } catch (error) {
   await session.abortTransaction();
+  throw error;
+} finally {
+  session.endSession();
 }
 ```
 
-### 2. 🔍 Text Search Index
-Located in `server/models/Product.js` and queried in `server/controllers/productController.js`:
-- Implements full-text search across product names and descriptions with custom field weights.
+### 2. Full-Text Search with Relevance Weighting
+
+**File References**: `server/models/Product.js`, `server/controllers/productController.js`
+
+ShopSphere implements a MongoDB text index spanning product titles and detailed descriptions. Field weights assign higher relevance scores to title matches over description matches.
 
 ```javascript
-// Product Schema Index
-ProductSchema.index({ name: 'text', description: 'text' }, { weights: { name: 10, description: 5 } });
-
-// Query Execution
-const products = await Product.find({ $text: { $search: query } });
-```
-
-### 3. ⚡ Compound Indexing
-Located in `server/models/Product.js`:
-- Optimizes complex compound queries filtering by category and sorting by price or fetching latest vendor items.
-
-```javascript
-// Compound Index 1: Accelerates Category + Price filtering
-ProductSchema.index({ category: 1, price: 1 });
-
-// Compound Index 2: Accelerates Vendor Dashboard product sorting
-ProductSchema.index({ vendor: 1, createdAt: -1 });
-```
-
-### 4. ⏳ TTL (Time-To-Live) Indexing
-Located in `server/models/GuestCart.js`:
-- Native MongoDB automatic index purging temporary guest cart sessions after 24 hours (86,400 seconds) without manual JavaScript timers.
-
-```javascript
-GuestCartSchema.index({ createdAt: 1 }, { expireAfterSeconds: 86400 });
-```
-
-### 5. 📊 Aggregation Framework Pipelines
-Located in `server/controllers/analyticsController.js`:
-- Real-time server-side database aggregations ($match, $unwind, $group, $sort, $limit, $project) for dashboards.
-
-```javascript
-// Vendor Monthly Sales Pipeline Example
-const monthlyRevenue = await Order.aggregate([
-  { $unwind: '$items' },
-  { $match: { 'items.vendor': vendorId, 'items.status': { $ne: 'Cancelled' } } },
+// Index Definition in server/models/Product.js
+ProductSchema.index(
   {
-    $group: {
-      _id: { year: { $year: '$createdAt' }, month: { $month: '$createdAt' } },
-      revenue: { $sum: { $multiply: ['$items.price', '$items.quantity'] } },
-      totalUnitsSold: { $sum: '$items.quantity' }
+    name: 'text',
+    description: 'text'
+  },
+  {
+    weights: {
+      name: 10,
+      description: 5
+    }
+  }
+);
+```
+
+Search queries evaluate text scores to rank returned results by relevance:
+
+```javascript
+// Query Execution in server/controllers/productController.js
+const products = await Product.find(
+  { $text: { $search: query } },
+  { score: { $meta: 'textScore' } }
+).sort({ score: { $meta: 'textScore' } });
+```
+
+### 3. Compound Index Optimization
+
+**File Reference**: `server/models/Product.js`
+
+Compound indexes are maintained to optimize frequently queried read paths involving filtering and sorting operations, avoiding in-memory sort stages (`SORT_KEY_GENERATOR`) and collection scans (`COLLSCAN`).
+
+1. **Category and Price Index**:
+   ```javascript
+   ProductSchema.index({ category: 1, price: 1 });
+   ```
+   Optimizes catalog queries that filter by category and sort by price ascending or descending.
+
+2. **Vendor and Timestamp Index**:
+   ```javascript
+   ProductSchema.index({ vendor: 1, createdAt: -1 });
+   ```
+   Optimizes vendor dashboard product queries that retrieve products created by a specific vendor ordered chronologically.
+
+### 4. Time-To-Live (TTL) Automatic Eviction
+
+**File Reference**: `server/models/GuestCart.js`
+
+Unauthenticated visitors interact with a guest cart identified by a client-generated UUID session identifier. Because inactive guest carts should not persist indefinitely, MongoDB native TTL indexing is utilized to automatically purge stale records without application-level scheduled cron jobs.
+
+```javascript
+// TTL Index Definition in server/models/GuestCart.js
+GuestCartSchema.index(
+  { createdAt: 1 },
+  { expireAfterSeconds: 86400 } // Purged after 24 hours
+);
+```
+
+When a guest user authenticates, the system merges line items from the active guest cart document into the persistent user cart before removing the guest document.
+
+### 5. Aggregation Framework Pipelines
+
+**File Reference**: `server/controllers/analyticsController.js`
+
+Real-time metric calculations are performed inside the database engine using aggregation pipelines.
+
+#### Vendor Monthly Revenue Pipeline
+
+Computes monthly revenue and unit sales for a specific vendor across all completed orders:
+
+```javascript
+const monthlyRevenue = await Order.aggregate([
+  {
+    $unwind: '$items'
+  },
+  {
+    $match: {
+      'items.vendor': vendorId,
+      'items.status': { $ne: 'Cancelled' }
     }
   },
-  { $sort: { '_id.year': 1, '_id.month': 1 } }
+  {
+    $group: {
+      _id: {
+        year: { $year: '$createdAt' },
+        month: { $month: '$createdAt' }
+      },
+      revenue: {
+        $sum: { $multiply: ['$items.price', '$items.quantity'] }
+      },
+      totalUnitsSold: {
+        $sum: '$items.quantity'
+      },
+      orderCount: {
+        $sum: 1
+      }
+    }
+  },
+  {
+    $sort: {
+      '_id.year': 1,
+      '_id.month': 1
+    }
+  }
+]);
+```
+
+#### Administrator Platform Performance Pipeline
+
+Calculates marketplace-wide sales volume and cross-references vendor details using `$lookup`:
+
+```javascript
+const topVendors = await Order.aggregate([
+  {
+    $unwind: '$items'
+  },
+  {
+    $match: {
+      'items.status': { $ne: 'Cancelled' }
+    }
+  },
+  {
+    $group: {
+      _id: '$items.vendor',
+      totalSalesAmount: {
+        $sum: { $multiply: ['$items.price', '$items.quantity'] }
+      },
+      totalUnitsSold: {
+        $sum: '$items.quantity'
+      }
+    }
+  },
+  {
+    $lookup: {
+      from: 'vendors',
+      localField: '_id',
+      foreignField: '_id',
+      as: 'vendorDetails'
+    }
+  },
+  {
+    $unwind: '$vendorDetails'
+  },
+  {
+    $project: {
+      _id: 1,
+      storeName: '$vendorDetails.storeName',
+      logo: '$vendorDetails.logo',
+      rating: '$vendorDetails.rating',
+      totalSalesAmount: 1,
+      totalUnitsSold: 1
+    }
+  },
+  {
+    $sort: {
+      totalSalesAmount: -1
+    }
+  },
+  {
+    $limit: 5
+  }
 ]);
 ```
 
 ---
 
-## 🔑 Pre-Seeded Viva Demo Accounts
+## Authentication and Access Control
 
-The database seed script (`server/seed.js`) automatically populates the system with realistic data and demo credentials for testing:
+Authentication uses stateless JSON Web Tokens (JWT). Passwords are encrypted before database insertion using `bcryptjs` with salted hashing.
 
-| Role | Email | Password | Details |
-| :--- | :--- | :--- | :--- |
-| **Admin** | `admin@shopsphere.com` | `adminpassword123` | Master control panel & platform analytics |
-| **Vendor 1** | `nexus@vendors.com` | `vendorpassword123` | Nexus Tech Lab (Electronics & Laptops) |
-| **Vendor 2** | `urban@vendors.com` | `vendorpassword123` | Urban Luxe Couture (Apparel & Leather) |
-| **Customer** | `alex@gmail.com` | `password123` | Alex Johnson (Pre-configured address & sample orders) |
+The authorization layer enforces Role-Based Access Control (RBAC) through middleware guards (`server/middleware/authMiddleware.js`):
+- `protect`: Validates the bearer token in the HTTP `Authorization` header and attaches the user document to `req.user`.
+- `authorize(...roles)`: Verifies that `req.user.role` matches one of the permitted roles (`customer`, `vendor`, `admin`).
 
-*Note: You can also use the **"Viva Demo Switcher"** button in the header bar for instant 1-click role switching during viva presentations!*
+Protected API endpoints reject unauthorized access with standard HTTP 401 (Unauthorized) or HTTP 403 (Forbidden) response codes.
 
 ---
 
-## ⚙️ Quick Start Setup Instructions
+## System Architecture
 
-### Prerequisites
-- Node.js (v18+)
-- MongoDB running locally at `mongodb://127.0.0.1:27017/shopsphere` or a MongoDB Atlas URI.
-
-### 1. Backend Setup & Seeding
-
-```bash
-# Navigate to server folder
-cd server
-
-# Install backend dependencies
-npm install
-
-# Run database seed script (Populates Admin, Vendors, Categories, Products & Orders)
-npm install
-
-# Start Express Backend server (Runs on port 5000)
-npm run dev
+```text
++-----------------------------------------------------------------------------------+
+|                                 CLIENT TIER                                       |
+|                                                                                   |
+|  React Components   |   Context Providers (Auth, Cart, Wishlist)   |   Axios API  |
++-----------------------------------------------------------------------------------+
+                                         |
+                                HTTP / REST (JSON)
+                                         |
++-----------------------------------------------------------------------------------+
+|                               APPLICATION TIER                                    |
+|                                                                                   |
+|  Express REST Routers                                                             |
+|      ├── authRoutes        ├── productRoutes     ├── cartRoutes                   |
+|      ├── checkoutRoutes    ├── orderRoutes       ├── vendorRoutes                 |
+|      ├── adminRoutes       ├── analyticsRoutes   ├── categoryRoutes               |
+|      └── reviewRoutes      └── wishlistRoutes                                     |
+|                                                                                   |
+|  Middleware: Authentication (JWT) & RBAC Authorization                            |
+|  Controllers: Transaction management, business validation, error handling         |
++-----------------------------------------------------------------------------------+
+                                         |
+                                    Mongoose ODM
+                                         |
++-----------------------------------------------------------------------------------+
+|                                  DATA TIER                                        |
+|                                                                                   |
+|  MongoDB Collections & Native Engine Capabilities:                                |
+|      ├── users             ├── products (Text & Compound Indexes)                 |
+|      ├── vendors           ├── categories                                         |
+|      ├── orders            ├── reviews                                            |
+|      ├── carts             ├── guestcarts (TTL Index - 24hr expiry)               |
+|      └── wishlists                                                                |
+|                                                                                   |
+|  Engine Functions: Multi-Document ACID Transactions, Aggregation Pipelines        |
++-----------------------------------------------------------------------------------+
 ```
 
-### 2. Frontend Setup
-
-```bash
-# Open a new terminal and navigate to client folder
-cd client
-
-# Install frontend dependencies
-npm install
-
-# Start Vite Development server (Runs on port 3000)
-npm run dev
-```
-
-Open your browser at `http://localhost:3000`.
-
 ---
 
-## 📡 REST API Endpoint Documentation
-
-| Method | Endpoint | Authorization | Description |
-| :--- | :--- | :--- | :--- |
-| `POST` | `/api/auth/register` | Public | Register customer account |
-| `POST` | `/api/auth/register-vendor` | Public | Register seller account & store profile |
-| `POST` | `/api/auth/login` | Public | Authenticate user & issue JWT |
-| `GET` | `/api/products` | Public | Search, filter, & sort products (Text/Compound Index) |
-| `GET` | `/api/products/:id` | Public | Get single product & vendor details |
-| `POST` | `/api/products` | Vendor / Admin | Create new product listing |
-| `PUT` | `/api/products/:id` | Vendor / Admin | Update product details |
-| `DELETE` | `/api/products/:id` | Vendor / Admin | Delete product listing |
-| `GET` | `/api/cart` | Public / Guest | Retrieve cart (User or Guest TTL) |
-| `POST` | `/api/cart/add` | Public / Guest | Add product to cart |
-| `POST` | `/api/checkout` | Customer | Process multi-vendor order via ACID Transaction |
-| `GET` | `/api/orders/my-orders` | Customer | Get customer order history & timeline |
-| `GET` | `/api/vendors/orders` | Vendor | Get order items belonging to vendor |
-| `PUT` | `/api/vendors/orders/:id/items/:itemId/status` | Vendor | Update order item status |
-| `GET` | `/api/analytics/vendor` | Vendor | Native MongoDB Aggregation analytics for vendor |
-| `GET` | `/api/analytics/admin` | Admin | Global marketplace aggregation analytics |
-| `GET` | `/api/admin/vendors` | Admin | List vendor applications |
-| `PUT` | `/api/admin/vendors/:id/status` | Admin | Approve or reject vendor store |
-
----
-
-## 📁 Repository Directory Structure
+## Project Directory Structure
 
 ```text
 ShopSphere/
+├── client/
+│   ├── src/
+│   │   ├── components/
+│   │   │   ├── CategoryCard.jsx
+│   │   │   ├── FilterSidebar.jsx
+│   │   │   ├── Footer.jsx
+│   │   │   ├── Navbar.jsx
+│   │   │   ├── ProductCard.jsx
+│   │   │   ├── ProtectedRoute.jsx
+│   │   │   ├── RatingStars.jsx
+│   │   │   ├── SearchBar.jsx
+│   │   │   └── SkeletonLoader.jsx
+│   │   ├── context/
+│   │   │   ├── AuthContext.jsx
+│   │   │   ├── CartContext.jsx
+│   │   │   └── WishlistContext.jsx
+│   │   ├── pages/
+│   │   │   ├── AdminDashboardPage.jsx
+│   │   │   ├── CartPage.jsx
+│   │   │   ├── CheckoutPage.jsx
+│   │   │   ├── CustomerDashboardPage.jsx
+│   │   │   ├── HomePage.jsx
+│   │   │   ├── LoginPage.jsx
+│   │   │   ├── ProductDetailPage.jsx
+│   │   │   ├── ProductDiscoveryPage.jsx
+│   │   │   ├── RegisterPage.jsx
+│   │   │   ├── VendorDashboardPage.jsx
+│   │   │   ├── VendorStorefrontPage.jsx
+│   │   │   └── WishlistPage.jsx
+│   │   ├── services/
+│   │   │   └── api.js
+│   │   ├── App.jsx
+│   │   ├── index.css
+│   │   └── main.jsx
+│   ├── index.html
+│   ├── package.json
+│   ├── tailwind.config.js
+│   └── vite.config.js
 ├── server/
-│   ├── config/          # Database connection
-│   ├── controllers/     # API Business logic & transactions
-│   ├── middleware/      # Auth & Role authorization
-│   ├── models/          # Mongoose Schemas (Text, Compound, TTL Indexes)
-│   ├── routes/          # Express REST API Routes
-│   ├── utils/           # JWT helper utilities
-│   ├── seed.js          # Database seed script
-│   └── server.js        # Server entry point
-└── client/
-    ├── src/
-    │   ├── components/  # Navbar, Footer, ProductCard, FilterSidebar, SearchBar
-    │   ├── context/     # AuthContext, CartContext, WishlistContext
-    │   ├── pages/       # Home, Catalog, ProductDetail, Cart, Checkout, Dashboards
-    │   ├── services/    # Axios API client
-    │   ├── App.jsx      # Main router & Toast alerts
-    │   └── main.jsx     # React entry point
-    ├── index.html
-    └── vite.config.js
+│   ├── config/
+│   │   └── db.js
+│   ├── controllers/
+│   │   ├── adminController.js
+│   │   ├── analyticsController.js
+│   │   ├── authController.js
+│   │   ├── cartController.js
+│   │   ├── categoryController.js
+│   │   ├── checkoutController.js
+│   │   ├── orderController.js
+│   │   ├── productController.js
+│   │   ├── reviewController.js
+│   │   ├── vendorController.js
+│   │   └── wishlistController.js
+│   ├── middleware/
+│   │   ├── authMiddleware.js
+│   │   └── errorHandler.js
+│   ├── models/
+│   │   ├── Cart.js
+│   │   ├── Category.js
+│   │   ├── GuestCart.js
+│   │   ├── Order.js
+│   │   ├── Product.js
+│   │   ├── Review.js
+│   │   ├── User.js
+│   │   ├── Vendor.js
+│   │   └── Wishlist.js
+│   ├── routes/
+│   │   ├── adminRoutes.js
+│   │   ├── analyticsRoutes.js
+│   │   ├── authRoutes.js
+│   │   ├── cartRoutes.js
+│   │   ├── categoryRoutes.js
+│   │   ├── checkoutRoutes.js
+│   │   ├── orderRoutes.js
+│   │   ├── productRoutes.js
+│   │   ├── reviewRoutes.js
+│   │   ├── vendorRoutes.js
+│   │   └── wishlistRoutes.js
+│   ├── utils/
+│   │   └── generateToken.js
+│   ├── package.json
+│   ├── seed.js
+│   └── server.js
+├── .gitignore
+└── README.md
 ```
 
 ---
 
-## 📄 License
-This project is created for educational database showcase purposes.
+## Database Models and Relationships
+
+| Model | Primary Fields | Key Relationships | Operational Function |
+| :--- | :--- | :--- | :--- |
+| `User` | `name`, `email`, `password`, `role`, `addresses` | Referenced by `Vendor`, `Cart`, `Wishlist`, `Order` | Core user identity and role assignment (`customer`, `vendor`, `admin`). |
+| `Vendor` | `storeName`, `storeSlug`, `description`, `status`, `rating` | `user` (`User` reference) | Merchant profile, approval status, and store configuration. |
+| `Category` | `name`, `slug`, `icon`, `image`, `description` | Referenced by `Product` | Taxonomy and product grouping. |
+| `Product` | `name`, `description`, `price`, `stock`, `soldCount` | `category` (`Category`), `vendor` (`Vendor`) | Inventory items with full-text and compound search indexes. |
+| `Cart` | `user`, `items: [{ product, vendor, quantity, price }]` | `user`, `Product`, `Vendor` | Persistent shopping basket for registered customers. |
+| `GuestCart` | `sessionId`, `items: [{ product, vendor, quantity }]` | `Product`, `Vendor` | Ephemeral cart with TTL index (24-hour lifetime). |
+| `Wishlist` | `user`, `products: [Product]` | `user`, `Product` | Saved products for customer accounts. |
+| `Order` | `customer`, `items`, `shippingAddress`, `totalAmount` | `customer` (`User`), `Product`, `Vendor` | Multi-vendor order containing per-item vendor tracking. |
+| `Review` | `user`, `product`, `rating`, `comment` | `user`, `Product` | Verified customer reviews and ratings. |
+
+---
+
+## Pre-Configured Demonstration Accounts
+
+Running the database seed script generates the following test accounts:
+
+| Role | Email | Password | Description |
+| :--- | :--- | :--- | :--- |
+| **Administrator** | `admin@shopsphere.com` | `adminpassword123` | Full access to moderation, category management, and platform analytics. |
+| **Vendor** | `nexus@vendors.com` | `password123` | Store: *Nexus Tech Lab* (Electronics and peripherals). |
+| **Vendor** | `urban@vendors.com` | `password123` | Store: *Urban Luxe Apparel* (Clothing and accessories). |
+| **Vendor** | `aura@vendors.com` | `password123` | Store: *Aura Living & Decor* (Home goods and furniture). |
+| **Vendor** | `botanica@vendors.com` | `password123` | Store: *Botanica Plant Co.* (Indoor plants and gardening). |
+| **Vendor** | `glow@vendors.com` | `password123` | Store: *Glow Botanical Beauty* (Skincare and cosmetics). |
+| **Customer** | `alex@gmail.com` | `password123` | Sample customer account with populated shipping address and order history. |
+| **Customer** | `sophia@gmail.com` | `password123` | Additional customer account for testing reviews and checkout. |
+
+---
+
+## RESTful API Specification
+
+### Authentication
+
+| Method | Endpoint | Access | Description |
+| :--- | :--- | :--- | :--- |
+| `POST` | `/api/auth/register` | Public | Register a standard customer account. |
+| `POST` | `/api/auth/register-vendor` | Public | Register a vendor account along with initial store profile. |
+| `POST` | `/api/auth/login` | Public | Authenticate credentials and return a signed JWT. |
+
+### Products
+
+| Method | Endpoint | Access | Description |
+| :--- | :--- | :--- | :--- |
+| `GET` | `/api/products` | Public | Retrieve catalog with text search, compound filtering, pagination, and sorting. |
+| `GET` | `/api/products/:id` | Public | Retrieve detailed product record including vendor metadata. |
+| `POST` | `/api/products` | Vendor / Admin | Create a new product listing. |
+| `PUT` | `/api/products/:id` | Vendor / Admin | Modify an existing product listing. |
+| `DELETE` | `/api/products/:id` | Vendor / Admin | Remove a product listing from the marketplace. |
+
+### Cart Management
+
+| Method | Endpoint | Access | Description |
+| :--- | :--- | :--- | :--- |
+| `GET` | `/api/cart` | Public / Guest | Fetch current user or guest cart. |
+| `POST` | `/api/cart/add` | Public / Guest | Add product item to cart. |
+| `PUT` | `/api/cart/update` | Public / Guest | Modify quantity for an existing cart item. |
+| `DELETE` | `/api/cart/remove/:productId` | Public / Guest | Remove item from cart. |
+| `POST` | `/api/cart/sync` | Customer | Merge guest session items into user cart on login. |
+
+### Checkout
+
+| Method | Endpoint | Access | Description |
+| :--- | :--- | :--- | :--- |
+| `POST` | `/api/checkout` | Customer | Process multi-vendor order execution using an ACID transaction. |
+
+### Orders
+
+| Method | Endpoint | Access | Description |
+| :--- | :--- | :--- | :--- |
+| `GET` | `/api/orders/my-orders` | Customer | Retrieve customer order history with item statuses. |
+| `GET` | `/api/orders/:id` | Customer / Vendor / Admin | Retrieve individual order breakdown. |
+| `GET` | `/api/vendors/orders` | Vendor | Fetch orders containing items sold by the authenticated vendor. |
+| `PUT` | `/api/vendors/orders/:id/items/:itemId/status` | Vendor | Update individual order item status (`Processing`, `Shipped`, `Delivered`). |
+
+### Analytics
+
+| Method | Endpoint | Access | Description |
+| :--- | :--- | :--- | :--- |
+| `GET` | `/api/analytics/vendor` | Vendor | Compute vendor-specific monthly revenue and top-selling products. |
+| `GET` | `/api/analytics/admin` | Admin | Compute platform-wide GMV, vendor volume, and category distribution. |
+
+### Administration and Vendors
+
+| Method | Endpoint | Access | Description |
+| :--- | :--- | :--- | :--- |
+| `GET` | `/api/admin/vendors` | Admin | List all registered vendors and approval statuses. |
+| `PUT` | `/api/admin/vendors/:id/status` | Admin | Approve or reject vendor merchant profile. |
+| `GET` | `/api/admin/users` | Admin | List all registered marketplace users. |
+| `PUT` | `/api/admin/users/:id/status` | Admin | Suspend or restore user account access. |
+| `GET` | `/api/vendors/store/:slug` | Public | Fetch public vendor storefront information and products. |
+
+---
+
+## Installation and Setup
+
+### Prerequisites
+
+Ensure the following runtimes and tools are installed:
+- **Node.js**: version 18.0.0 or higher
+- **npm**: version 9.0.0 or higher
+- **MongoDB**: Local MongoDB instance (v6.0+) or connection URI to MongoDB Atlas
+- **Git**: Distributed version control system
+
+### Clone Repository
+
+```bash
+git clone https://github.com/Dhee5021raj/Shopsphere.git
+cd Shopsphere
+```
+
+### Backend Configuration
+
+1. Navigate to the server directory:
+   ```bash
+   cd server
+   ```
+
+2. Install backend dependencies:
+   ```bash
+   npm install
+   ```
+
+3. Configure environment variables. Create a `.env` file inside the `server/` directory:
+   ```env
+   PORT=5000
+   MONGODB_URI=mongodb://127.0.0.1:27017/shopsphere
+   JWT_SECRET=shopsphere_super_secret_jwt_key_2026
+   ```
+
+### Database Seeding
+
+Populate the database with demo users, vendors, product categories, sample inventory, and past orders:
+
+```bash
+npm run seed
+```
+
+*Note: If local MongoDB is offline or unavailable, the seed and server scripts automatically initiate an in-memory database instance (`mongodb-memory-server`) for zero-configuration testing.*
+
+Start the backend API server:
+
+```bash
+npm run dev
+```
+
+The server binds to port `5000` (accessible at `http://localhost:5000`).
+
+### Frontend Configuration
+
+1. Open a new terminal window and navigate to the client directory:
+   ```bash
+   cd client
+   ```
+
+2. Install frontend dependencies:
+   ```bash
+   npm install
+   ```
+
+3. Launch the Vite development server:
+   ```bash
+   npm run dev
+   ```
+
+The client application will start at `http://localhost:3000` with automated API proxying to `http://localhost:5000`.
+
+---
+
+## Environment Variables
+
+The backend application recognizes the following configuration parameters:
+
+| Variable | Required | Default Value | Description |
+| :--- | :--- | :--- | :--- |
+| `PORT` | Optional | `5000` | Port on which the Express application listens. |
+| `MONGODB_URI` | Required | `mongodb://127.0.0.1:27017/shopsphere` | Connection URI for the MongoDB instance or replica set. |
+| `JWT_SECRET` | Required | `default_secret_key` | Cryptographic secret used for signing and verifying JSON Web Tokens. |
+
+---
+
+## Project Scripts
+
+### Server Scripts (`server/package.json`)
+
+| Script | Command | Purpose |
+| :--- | :--- | :--- |
+| `npm run dev` | `nodemon server.js` | Runs the API server with auto-restart on code changes. |
+| `npm start` | `node server.js` | Starts the production server process. |
+| `npm run seed` | `node seed.js` | Resets collections and seeds sample data. |
+
+### Client Scripts (`client/package.json`)
+
+| Script | Command | Purpose |
+| :--- | :--- | :--- |
+| `npm run dev` | `vite` | Starts the local Vite development server. |
+| `npm run build` | `vite build` | Compiles and bundles production static assets. |
+| `npm run preview` | `vite preview` | Previews the production build locally. |
+
+---
+
+## Project Objectives
+
+ShopSphere was developed to demonstrate full-stack software architecture principles and database engineering competencies:
+
+- **Relational Data Modeling in NoSQL**: Representing one-to-many, many-to-many, and embedded subdocument relationships within a document-oriented database.
+- **Data Integrity and Consistency**: Ensuring non-negative inventory balances and guaranteed checkout completion through multi-document ACID transactions.
+- **Index Optimization**: Implementing text search indexing with weighting and compound indexing to optimize catalog query latency.
+- **Automated Lifecycle Management**: Using TTL collections to manage temporal guest data without background daemon processes.
+- **Analytical Processing**: Utilizing native aggregation framework pipelines to compute multi-dimensional metrics without offloading processing to the application tier.
+- **Security & RBAC**: Enforcing cryptographic password storage and role-based access control across multiple client personas.
+
+---
+
+## Future Scope
+
+- **Payment Gateway Integration**: Direct integration with payment processing providers (e.g., Stripe, PayPal, Razorpay) with webhook verification.
+- **Cloud Object Storage**: S3-compatible cloud storage integration for vendor image uploads and CDN distribution.
+- **Asynchronous Notifications**: Automated transactional emails and push notifications for order status transitions.
+- **Caching Layer**: In-memory Redis caching for top catalog categories and frequently viewed products.
+- **Containerization and Orchestration**: Docker and Docker Compose configuration for unified service deployment.

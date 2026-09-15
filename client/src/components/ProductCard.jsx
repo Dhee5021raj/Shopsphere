@@ -41,9 +41,9 @@ const ProductCard = ({ product, onToast }) => {
   };
 
   return (
-    <div className="group relative bg-slate-900/60 border border-slate-800 hover:border-brand-500/50 rounded-2xl overflow-hidden transition-all duration-300 hover:shadow-xl hover:shadow-brand-500/10 flex flex-col justify-between">
+    <div className="group relative bg-white border border-slate-200/80 hover:border-emerald-500 rounded-2xl overflow-hidden transition-all duration-300 hover:shadow-xl flex flex-col justify-between">
       {/* Top Media Container */}
-      <div className="relative aspect-square w-full bg-slate-950 overflow-hidden">
+      <div className="relative aspect-square w-full bg-slate-100 overflow-hidden">
         <Link to={`/products/${product._id}`}>
           <img
             src={product.images && product.images[0] ? product.images[0] : 'https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=600'}
@@ -54,7 +54,7 @@ const ProductCard = ({ product, onToast }) => {
 
         {/* Discount Badge */}
         {hasDiscount && (
-          <span className="absolute top-3 left-3 bg-red-500/90 backdrop-blur-md text-white text-xs font-bold px-2.5 py-1 rounded-full shadow-lg">
+          <span className="absolute top-3 left-3 bg-emerald-600 text-white text-xs font-bold px-2.5 py-1 rounded-full shadow-sm">
             -{discountPercent}% OFF
           </span>
         )}
@@ -64,8 +64,8 @@ const ProductCard = ({ product, onToast }) => {
           onClick={handleToggleWishlist}
           className={`absolute top-3 right-3 p-2.5 rounded-full backdrop-blur-md transition-all ${
             isWished
-              ? 'bg-rose-500/20 text-rose-500 border border-rose-500/40 scale-110'
-              : 'bg-slate-900/60 text-slate-300 hover:text-white border border-white/10 hover:bg-slate-900'
+              ? 'bg-rose-50 text-rose-500 border border-rose-200 scale-110'
+              : 'bg-white/90 text-slate-500 hover:text-rose-500 border border-slate-200 hover:bg-white shadow-sm'
           }`}
           title={isWished ? 'Remove from Wishlist' : 'Add to Wishlist'}
         >
@@ -74,8 +74,8 @@ const ProductCard = ({ product, onToast }) => {
 
         {/* Out of stock overlay */}
         {product.stock <= 0 && (
-          <div className="absolute inset-0 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center">
-            <span className="bg-rose-500/20 text-rose-400 border border-rose-500/30 text-xs font-semibold px-3 py-1.5 rounded-full uppercase tracking-wider">
+          <div className="absolute inset-0 bg-white/80 backdrop-blur-sm flex items-center justify-center">
+            <span className="bg-rose-50 text-rose-600 border border-rose-200 text-xs font-semibold px-3 py-1.5 rounded-full uppercase tracking-wider">
               Out of Stock
             </span>
           </div>
@@ -89,7 +89,7 @@ const ProductCard = ({ product, onToast }) => {
           {product.vendor && (
             <Link
               to={`/store/${product.vendor.storeSlug || ''}`}
-              className="inline-flex items-center gap-1.5 text-xs text-brand-400 font-medium hover:text-brand-300 mb-1.5 transition-colors"
+              className="inline-flex items-center gap-1.5 text-xs text-emerald-600 font-semibold hover:text-emerald-700 mb-1.5 transition-colors"
             >
               <Store size={13} />
               <span>{product.vendor.storeName || 'Verified Seller'}</span>
@@ -98,7 +98,7 @@ const ProductCard = ({ product, onToast }) => {
 
           {/* Title */}
           <Link to={`/products/${product._id}`}>
-            <h3 className="text-slate-100 font-semibold text-base line-clamp-2 hover:text-brand-400 transition-colors mb-2">
+            <h3 className="text-slate-900 font-semibold text-base line-clamp-2 hover:text-emerald-600 transition-colors mb-2">
               {product.name}
             </h3>
           </Link>
@@ -109,16 +109,16 @@ const ProductCard = ({ product, onToast }) => {
           <div className="flex items-center justify-between gap-2 mb-3">
             <RatingStars rating={product.rating} numReviews={product.numReviews} size={14} />
             {product.stock > 0 && product.stock <= 5 && (
-              <span className="text-[11px] text-amber-400 font-medium">
+              <span className="text-[11px] text-amber-600 font-semibold bg-amber-50 px-2 py-0.5 rounded-full border border-amber-200">
                 Only {product.stock} left!
               </span>
             )}
           </div>
 
           {/* Pricing & Add to Cart */}
-          <div className="flex items-center justify-between pt-3 border-t border-slate-800/80">
+          <div className="flex items-center justify-between pt-3 border-t border-slate-100">
             <div>
-              <div className="text-lg font-bold text-white">
+              <div className="text-lg font-black text-slate-900">
                 ₹{effectivePrice.toLocaleString('en-IN')}
               </div>
               {hasDiscount && (
@@ -133,8 +133,8 @@ const ProductCard = ({ product, onToast }) => {
               disabled={product.stock <= 0 || adding}
               className={`inline-flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-semibold transition-all ${
                 product.stock <= 0
-                  ? 'bg-slate-800 text-slate-500 cursor-not-allowed'
-                  : 'bg-brand-600 hover:bg-brand-500 text-white shadow-lg shadow-brand-500/20 active:scale-95'
+                  ? 'bg-slate-100 text-slate-400 cursor-not-allowed'
+                  : 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm active:scale-95'
               }`}
             >
               <ShoppingBag size={15} />

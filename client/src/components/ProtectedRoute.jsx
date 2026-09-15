@@ -7,10 +7,10 @@ const ProtectedRoute = ({ children, allowedRoles }) => {
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-950 text-white">
+      <div className="min-h-screen flex items-center justify-center bg-slate-50 text-slate-900">
         <div className="flex flex-col items-center gap-3">
           <div className="w-10 h-10 border-4 border-brand-500 border-t-transparent rounded-full animate-spin"></div>
-          <p className="text-sm font-medium text-slate-400">Verifying session credentials...</p>
+          <p className="text-sm font-medium text-slate-500">Verifying session credentials...</p>
         </div>
       </div>
     );
