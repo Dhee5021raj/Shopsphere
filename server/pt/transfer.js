@@ -67,9 +67,22 @@ async function runTransfer(spec, options = {}) {
   const localFilters = new Map();
   for (const r of spec.relations) localFilters.set(r.alias, resolveLocalFilter(r.localFilter || {}, now));
 
+  const adaptive = !!options.adaptive;
+  const edgeRatio = options.adaptiveEdgeRatio != null ? options.adaptiveEdgeRatio : 0.3;
+  const decisions = [];
   const constraints = new Map(spec.relations.map((r) => [r.alias, []]));
   const setCache = new Map(); // alias -> Map(field -> FilterSet)
-  const invalidate = (alias) => setCache.delete(alias);
+  const rowCache = new Map(); // alias -> current row count under applied constraints
+  const invalidate = (alias) => { setCache.delete(alias); rowCache.delete(alias); };
+
+  async function rowCount(alias) {
+    if (rowCache.has(alias)) return rowCache.get(alias);
+    const Model = modelForCollection(spec.relations.find((r) => r.alias === alias).collection);
+    const match = { $and: [localFilters.get(alias), constraintsToMatch(constraints.get(alias))] };
+    const n = await Model.countDocuments(match);
+    rowCache.set(alias, n);
+    return n;
+  }
 
   // Returns { size, set }. `set` is null when the distinct set exceeds the cap
   // (we count first so we never materialise a >16MB distinct result).
@@ -114,9 +127,26 @@ async function runTransfer(spec, options = {}) {
         timeMs: Date.now() - started, skipped: true,
         reason: `incoming set ${keysIn} > cap ${cap}`
       };
+      decisions.push({ type: 'edge-skip', why: 'cap', target, filterBy, keysIn, cap });
       stats.push(skipped);
       log(`  SKIP ${direction.padEnd(8)} ${target} <- ${filterBy} : |in|=${keysIn} > cap ${cap}`);
       continue;
+    }
+
+    if (adaptive) {
+      const rows = await rowCount(target);
+      const ratio = rows > 0 ? keysIn / rows : (keysIn > 0 ? Infinity : 0);
+      if (ratio > edgeRatio) {
+        decisions.push({ type: 'edge-skip', why: 'ratio', target, filterBy, keysIn, targetRows: rows, ratio: +ratio.toFixed(4), threshold: edgeRatio });
+        stats.push({
+          target, filterBy, direction, targetField: on.targetField, filterField: on.filterField,
+          keysIn, keysOut: null, docsExamined: null, timeMs: Date.now() - started, skipped: true,
+          reason: `adaptive ratio ${ratio.toFixed(3)} > ${edgeRatio}`
+        });
+        log(`  SKIP ${direction.padEnd(8)} ${target} <- ${filterBy} : ratio=${ratio.toFixed(3)} > ${edgeRatio}`);
+        continue;
+      }
+      decisions.push({ type: 'edge-apply', target, filterBy, keysIn, targetRows: rows, ratio: +ratio.toFixed(4), threshold: edgeRatio });
     }
 
     constraints.get(target).push({ field: on.targetField, set: incoming.set });
@@ -141,7 +171,7 @@ async function runTransfer(spec, options = {}) {
     log(`  ${direction.padEnd(8)} ${target} <- ${filterBy} : |in|=${keysIn} docs=${examined} keysOut=${JSON.stringify(keysOut)} ${Date.now() - started}ms`);
   }
 
-  return { schedule, stats, constraints, localFilters, sizes };
+  return { schedule, stats, constraints, localFilters, sizes, decisions };
 }
 
 /** Estimate relation sizes for LargestRoot. */

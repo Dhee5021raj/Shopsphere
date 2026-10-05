@@ -31,7 +31,11 @@ function main() {
   const noSeed = argv.includes('--no-seed');
   const passthrough = argv.filter((a) => !a.startsWith('--scale=') && a !== '--no-seed');
   const scaleFlags = SCALES[scaleArg] || [];
-  const env = { PT_SCALE: scaleArg };
+  // timed-out runs are censored, so use the long ceiling from the brief
+  if (!argv.some((a) => a.startsWith('--timeoutMs='))) passthrough.push('--timeoutMs=120000');
+  const label = (argv.find((a) => a.startsWith('--label=')) || `--label=${scaleArg === 'small' ? 'smoke' : 'full'}`).split('=')[1];
+  passthrough.push(`--label=${label}`);
+  const env = { PT_SCALE: scaleArg, PT_LABEL: label };
   if (argv.includes('--bloom')) env.PT_BLOOM = '1';
 
   const t0 = Date.now();

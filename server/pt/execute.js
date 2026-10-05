@@ -15,7 +15,7 @@
  */
 const mongoose = require('mongoose');
 const { buildJoinGraph } = require('./joinGraph');
-const { parseRef, resolveLocalFilter } = require('./querySpec');
+const { parseRef, resolveLocalFilter, modelForCollection } = require('./querySpec');
 const { runTransfer, computeSizes, constraintsToMatch } = require('./transfer');
 
 // ── field bookkeeping ─────────────────────────────────────────
@@ -42,22 +42,28 @@ function findJoinEdge(spec, joinedSet, Y) {
   throw new Error(`Join order is not a connected prefix: '${Y}' has no edge to the joined set`);
 }
 
+function prefixFilter(alias, f) {
+  if (!f) return {};
+  if (Array.isArray(f.$and)) return { $and: f.$and.map((x) => prefixFilter(alias, x)) };
+  if (Array.isArray(f.$or)) return { $or: f.$or.map((x) => prefixFilter(alias, x)) };
+  const o = {};
+  for (const [k, v] of Object.entries(f)) { if (k === '$and' || k === '$or') continue; o[`${alias}.${k}`] = v; }
+  return o;
+}
+
 function buildPipeline(spec, joinOrder, opts) {
-  const { collectionOf, applyLocalFilters, now } = opts;
+  const { collectionOf, now } = opts;
   const needed = opts.needed || collectNeededFields(spec);
   const localFilterOf = (alias) => resolveLocalFilter(spec.relations.find((r) => r.alias === alias).localFilter || {}, now);
-
-  const prefixKeys = (alias, filter) => {
-    const o = {};
-    for (const [k, v] of Object.entries(filter)) o[`${alias}.${k}`] = v;
-    return o;
-  };
+  // per-alias filter applied when the alias is introduced (adaptive mode supplies
+  // a filter for relations that were NOT materialised)
+  const filterOf = opts.filterOf || ((alias) => (opts.applyLocalFilters ? localFilterOf(alias) : {}));
 
   const pipeline = [];
   const first = joinOrder[0];
-  if (applyLocalFilters) {
-    const lf = localFilterOf(first);
-    if (Object.keys(lf).length) pipeline.push({ $match: lf });
+  {
+    const lf = filterOf(first);
+    if (lf && Object.keys(lf).length) pipeline.push({ $match: lf });
   }
   // Nest the first relation under its alias so every reference is uniformly
   // `$alias.field` (matches the $lookup outputs).
@@ -81,9 +87,9 @@ function buildPipeline(spec, joinOrder, opts) {
       }
     });
     pipeline.push({ $unwind: `$${Y}` });
-    if (applyLocalFilters) {
-      const lf = localFilterOf(Y);
-      if (Object.keys(lf).length) pipeline.push({ $match: prefixKeys(Y, lf) });
+    {
+      const lf = filterOf(Y);
+      if (lf && Object.keys(lf).length) pipeline.push({ $match: prefixFilter(Y, lf) });
     }
     joined.add(Y);
   }
@@ -159,10 +165,24 @@ async function runNaive(spec, joinOrder, ctx = {}) {
 let RUN_SEQ = 0;
 function uniqueRunId() { return `${Date.now().toString(36)}${(RUN_SEQ++).toString(36)}`; }
 
-async function materialize(spec, transfer, runId, now) {
+/**
+ * Materialise the reduced relations into temp collections.
+ *
+ * Adaptive mode additionally SKIPS materialisation for any relation whose
+ * reduced size exceeds `adaptiveMatRatio` (default 0.5) of its local-filtered
+ * size — scanning the original collection with the key-set filter inline is
+ * cheaper than copying it. Each decision and its ratio is returned.
+ *
+ * Returns { temps, fallback, decisions }. `fallback` maps a non-materialised
+ * alias to the filter that must be applied to its ORIGINAL collection.
+ */
+async function materialize(spec, transfer, runId, now, opts = {}) {
   const db = mongoose.connection.db;
   const needed = collectNeededFields(spec);
   const temps = new Map();
+  const fallback = new Map();
+  const decisions = [];
+  const matRatio = opts.adaptive ? (opts.adaptiveMatRatio != null ? opts.adaptiveMatRatio : 0.5) : null;
   const edgeFieldsOf = (alias) => {
     const s = new Set();
     for (const e of spec.edges) {
@@ -174,23 +194,43 @@ async function materialize(spec, transfer, runId, now) {
     return s;
   };
   for (const r of spec.relations) {
+    const baseFilter = transfer.localFilters.get(r.alias);
+    const reducedFilter = { $and: [baseFilter, constraintsToMatch(transfer.constraints.get(r.alias))] };
+    if (opts.adaptive) {
+      const Model = modelForCollection(r.collection);
+      const original = await Model.countDocuments(baseFilter);
+      const reduced = await Model.countDocuments(reducedFilter);
+      const ratio = original > 0 ? reduced / original : 1;
+      if (ratio > matRatio) {
+        fallback.set(r.alias, reducedFilter);
+        decisions.push({ type: 'mat-skip', alias: r.alias, original, reduced, ratio: +ratio.toFixed(4), threshold: matRatio });
+        continue;
+      }
+      decisions.push({ type: 'materialize', alias: r.alias, original, reduced, ratio: +ratio.toFixed(4), threshold: matRatio });
+    }
     const name = `tmp_pt_${runId}_${r.alias}`;
-    const match = { $and: [transfer.localFilters.get(r.alias), constraintsToMatch(transfer.constraints.get(r.alias))] };
     const project = { _id: 0 };
     for (const f of needed.get(r.alias)) project[f] = 1;
     if (needed.get(r.alias).has('_id')) project._id = 1;
-    await db.collection(r.collection).aggregate([{ $match: match }, { $project: project }, { $out: name }]).toArray();
-    for (const f of edgeFieldsOf(r.alias)) {
-      await db.collection(name).createIndex({ [f]: 1 });
-    }
+    await db.collection(r.collection).aggregate([{ $match: reducedFilter }, { $project: project }, { $out: name }]).toArray();
+    for (const f of edgeFieldsOf(r.alias)) await db.collection(name).createIndex({ [f]: 1 });
     temps.set(r.alias, name);
   }
-  return temps;
+  return { temps, fallback, decisions };
+}
+
+function collectionResolver(spec, mat) {
+  const full = fullCollectionOf(spec);
+  return (alias) => mat.temps.get(alias) || full(alias);
+}
+function filterResolver(mat) {
+  return (alias) => (mat.fallback.has(alias) ? mat.fallback.get(alias) : {});
 }
 
 async function dropTemps(temps) {
   const db = mongoose.connection.db;
-  await Promise.all([...temps.values()].map((n) => db.collection(n).drop().catch(() => {})));
+  const names = temps instanceof Map ? [...temps.values()] : [...(temps.temps ? temps.temps.values() : [])];
+  await Promise.all(names.map((n) => db.collection(n).drop().catch(() => {})));
 }
 
 /**
@@ -216,7 +256,7 @@ async function runReduced(spec, joinOrder, opts = {}) {
   const materializationMs = Date.now() - m0;
 
   const j0 = Date.now();
-  const result = await runPipeline(spec, joinOrder, { collectionOf: (a) => temps.get(a), applyLocalFilters: false, now, maxTimeMs: opts.maxTimeMs });
+  const result = await runPipeline(spec, joinOrder, { collectionOf: collectionResolver(spec, temps), filterOf: filterResolver(temps), applyLocalFilters: false, now, maxTimeMs: opts.maxTimeMs });
   const joinMs = Date.now() - j0;
 
   await dropTemps(temps);
@@ -229,7 +269,8 @@ async function runReduced(spec, joinOrder, opts = {}) {
     totalMs: transferMs + materializationMs + joinMs,
     skippedEdges: skippedEdges.length,
     skippedList: skippedEdges.map((s) => `${s.target}<-${s.filterBy}`),
-    transferStats: transfer.stats
+    transferStats: transfer.stats,
+    decisions: temps.decisions
   };
 }
 
@@ -243,22 +284,25 @@ async function prepareReduced(spec, opts = {}) {
   const sizes = opts.sizes || (await computeSizes(spec, now));
   const runId = opts.runId || uniqueRunId();
   const t0 = Date.now();
-  const transfer = await runTransfer(spec, { sizes, now, setKind: opts.setKind || null, cap: opts.cap, log: () => {} });
+  const transfer = await runTransfer(spec, { sizes, now, setKind: opts.setKind || null, cap: opts.cap, adaptive: opts.adaptive, adaptiveEdgeRatio: opts.adaptiveEdgeRatio, log: () => {} });
   const transferMs = Date.now() - t0;
   const m0 = Date.now();
-  const temps = await materialize(spec, transfer, runId, now);
+  const mat = await materialize(spec, transfer, runId, now, { adaptive: opts.adaptive, adaptiveMatRatio: opts.adaptiveMatRatio });
   const materializationMs = Date.now() - m0;
   const skippedList = transfer.stats.filter((s) => s.skipped).map((s) => `${s.target}<-${s.filterBy}`);
-  return { transfer, transferMs, materializationMs, temps, runId, setKind: opts.setKind || null, cap: opts.cap, sizes, skippedList };
+  return { transfer, transferMs, materializationMs, mat, runId, setKind: opts.setKind || null, cap: opts.cap, sizes, skippedList, decisions: [...(transfer.decisions || []), ...mat.decisions] };
 }
 
 async function joinReduced(spec, joinOrder, prep, now) {
   const j0 = Date.now();
-  const result = await runPipeline(spec, joinOrder, { collectionOf: (a) => prep.temps.get(a), applyLocalFilters: false, now: now || new Date(), maxTimeMs: prep.maxTimeMs });
+  const result = await runPipeline(spec, joinOrder, {
+    collectionOf: collectionResolver(spec, prep.mat), filterOf: filterResolver(prep.mat),
+    applyLocalFilters: false, now: now || new Date(), maxTimeMs: prep.maxTimeMs
+  });
   return { result, joinMs: Date.now() - j0 };
 }
 
-async function cleanupReduced(prep) { await dropTemps(prep.temps); }
+async function cleanupReduced(prep) { await dropTemps(prep.mat.temps); }
 
 // ── equality ──────────────────────────────────────────────────
 function normalizeRows(rows) {
@@ -293,7 +337,7 @@ function checksum(rows) {
 }
 
 module.exports = {
-  collectNeededFields, buildPipeline, runPipeline, validJoinOrders,
+  collectNeededFields, buildPipeline, runPipeline, validJoinOrders, prefixFilter,
   runNaive, runReduced, materialize, dropTemps, uniqueRunId,
   prepareReduced, joinReduced, cleanupReduced,
   normalizeRows, resultsEqual, checksum, fullCollectionOf
