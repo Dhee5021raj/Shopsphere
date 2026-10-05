@@ -709,8 +709,15 @@ Start the bundled real server (default port 27018, data in `server/.mongo-bench-
 cd server
 npm run mongod            # launches the real mongod binary directly
 npm run seed:bench -- --small --drop     # tiny dataset (tests/dev)
+npm run test:pt           # Step 8 tests (acyclicity, schedule shape, naive==reduced)
 npm run repro             # seed (default scale) + Step 4 + report
 ```
 
+**Shadow logging (off by default):** set `PT_SHADOW=1` and a matching mongo-pt
+run is measured in a detached process after an analytics endpoint responds — the
+request is never delayed. `GET /api/admin/pt-log` (admin only) returns the last
+100 records, shown at the React route `/admin/pt-log` with speedup and transfer
+overhead. See `docs/predicate-transfer.md` for the log format.
+
 Point `BENCH_URI` at your own instance if you prefer. See `docs/pt-design.md`,
-`docs/er-and-schema.md`, and `docs/results.md`.
+`docs/er-and-schema.md`, `docs/predicate-transfer.md`, and `docs/results.md`.
