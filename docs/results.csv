@@ -1,0 +1,33 @@
+# **Environment**
+# mongod 8.2.6 | 16-core AMD Ryzen 7 7735HS with Radeon Graphics         | 15.19 GB RAM (4.59 GB free) | win32 10.0.26200 | Node v22.19.0
+# scale=small runs=2 caps=[10000, 50000, 200000] bloom=false timeout=8000ms
+# other heavy processes: Memory Compression (1.13 GB); chrome.exe (0.58 GB); chrome.exe (0.86 GB); chrome.exe (0.53 GB)
+spec,order,naive_median_ms,exact_median_ms,bloom_median_ms,transfer_ms,materialization_ms,total_ms,equal
+rare_category_revenue_7d,oi>o>p>v>cat,5880.5,2,,73,108,183,true
+rare_category_revenue_7d,p>oi>o>cat>v,6224,2,,73,108,183,true
+rare_category_revenue_7d,p>cat>oi>v>o,368.5,2.5,,73,108,183.5,true
+rare_category_revenue_7d,oi>o>v>p>cat,5923.5,2.5,,73,108,183.5,true
+common_category_revenue_365d,oi>o>p>v>cat,,4578,,590,554,5722,false
+common_category_revenue_365d,p>oi>o>cat>v,,3814.5,,590,554,4958.5,false
+vendor_scoped_revenue_90d,v>oi>p>o,2621,385.5,,905,212,1502.5,true
+vendor_scoped_revenue_90d,oi>p>v>o,,505.5,,905,212,1622.5,false
+vendor_scoped_revenue_90d,oi>v>p>o,7831.5,581.5,,905,212,1698.5,true
+user_scoped_spend_30d,o>u>oi>p,116.5,2,,270,72,344,true
+user_scoped_spend_30d,o>oi>u>p,562,2,,270,72,344,true
+user_scoped_spend_30d,oi>p>o>u,,2.5,,270,72,344.5,false
+user_scoped_spend_30d,oi>o>u>p,5557.5,2,,270,72,344,true
+user_scoped_spend_30d,u>o>oi>p,1.5,1,,270,72,343,true
+user_scoped_spend_30d,p>oi>o>u,6213.5,2,,270,72,344,true
+low_rating_reviews_by_category,r>p>v>c,507.5,526,,170,142,838,true
+low_rating_reviews_by_category,p>v>r>c,758,485.5,,170,142,797.5,true
+low_rating_reviews_by_category,p>r>v>c,654,567.5,,170,142,879.5,true
+low_rating_reviews_by_category,p>c>r>v,647,514,,170,142,826,true
+low_rating_reviews_by_category,r>p>c>v,536.5,524.5,,170,142,836.5,true
+low_rating_reviews_by_category,p>v>c>r,720,403.5,,170,142,715.5,true
+vendor_category_revenue_365d,oi>p>o>v>c,,3143,,349,292,3784,false
+vendor_category_revenue_365d,p>oi>v>o>c,,2543,,349,292,3184,false
+vendor_category_revenue_365d,p>v>oi>o>c,3157.5,1810.5,,349,292,2451.5,true
+user_vendor_category_spend_30d,o>oi>u>v>p>c,582,2.5,,573,126,701.5,true
+user_vendor_category_spend_30d,o>oi>p>u>v>c,799.5,2,,573,126,701,true
+user_vendor_category_spend_30d,oi>v>o>u>p>c,,2,,573,126,701,false
+user_vendor_category_spend_30d,o>oi>p>v>c>u,1180,2,,573,126,701,true
