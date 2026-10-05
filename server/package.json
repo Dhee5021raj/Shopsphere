@@ -9,7 +9,8 @@
     "dev": "nodemon server.js",
     "seed": "node seed.js",
     "mongod": "bash scripts/mongod.sh start",
-    "seed:bench": "node scripts/seedBench.js"
+    "seed:bench": "node scripts/seedBench.js",
+    "pt:schedule": "node scripts/ptSchedule.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
