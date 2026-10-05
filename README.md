@@ -685,3 +685,32 @@ ShopSphere was developed to demonstrate full-stack software architecture princip
 - **Asynchronous Notifications**: Automated transactional emails and push notifications for order status transitions.
 - **Caching Layer**: In-memory Redis caching for top catalog categories and frequently viewed products.
 - **Containerization and Orchestration**: Docker and Docker Compose configuration for unified service deployment.
+
+---
+
+## mongo-pt — predicate-transfer benchmark (separate database)
+
+This repo also contains **mongo-pt**, a predicate-transfer engine for MongoDB based on
+"Debunking the Myth of Join Ordering: Toward Robust SQL Analytics" (SIGMOD 2025,
+arXiv:2502.15181). It lives entirely under `server/pt/`, `server/scripts/`, and
+`server/benchmarks/`, and works in a **separate database** (`shopsphere_bench`) so the
+demo app is never touched.
+
+### Real mongod only
+
+The benchmark requires a **real, disk-backed `mongod`**. `mongodb-memory-server` is present
+as a dev dependency but is used **only at `npm install` time to download the mongod
+binary** — the library is never used at runtime, and `server/pt/benchDb.js` refuses any URI
+whose database is not `shopsphere_bench`.
+
+Start the bundled real server (default port 27018, data in `server/.mongo-bench-data/`):
+
+```bash
+cd server
+npm run mongod            # launches the real mongod binary directly
+npm run seed:bench -- --small --drop     # tiny dataset (tests/dev)
+npm run repro             # seed (default scale) + Step 4 + report
+```
+
+Point `BENCH_URI` at your own instance if you prefer. See `docs/pt-design.md`,
+`docs/er-and-schema.md`, and `docs/results.md`.

@@ -9,7 +9,8 @@
 const fs = require('fs');
 const path = require('path');
 
-const LOG = path.join(__dirname, '..', 'logs', 'pt-log.jsonl');
+const LOG = process.env.PT_LOG || path.join(__dirname, '..', 'logs', 'pt-log.jsonl');
+const SUFFIX = process.env.PT_REPORT_SUFFIX || '';
 const DOCS = path.join(__dirname, '..', '..', 'docs');
 
 function readLog() {
@@ -140,11 +141,11 @@ function main() {
   const s = readLog();
   const env = s.find((r) => r.kind === 'env');
   fs.mkdirSync(DOCS, { recursive: true });
-  fs.writeFileSync(path.join(DOCS, 'results.md'), md(s, env));
-  fs.writeFileSync(path.join(DOCS, 'results.csv'), envHeader(env).replace(/^> ?/gm, '# ') + csv(s));
-  fs.writeFileSync(path.join(DOCS, 'results-chart.csv'), chartCsv(s));
-  fs.writeFileSync(path.join(DOCS, 'results-chart.html'), svgChart(s, env));
-  console.log('wrote docs/results.md, results.csv, results-chart.csv, results-chart.html');
+  fs.writeFileSync(path.join(DOCS, `results${SUFFIX}.md`), md(s, env));
+  fs.writeFileSync(path.join(DOCS, `results${SUFFIX}.csv`), envHeader(env).replace(/^> ?/gm, '# ') + csv(s));
+  fs.writeFileSync(path.join(DOCS, `results-chart${SUFFIX}.csv`), chartCsv(s));
+  fs.writeFileSync(path.join(DOCS, `results-chart${SUFFIX}.html`), svgChart(s, env));
+  console.log(`wrote docs/results${SUFFIX}.md, results${SUFFIX}.csv, results-chart${SUFFIX}.csv, results-chart${SUFFIX}.html`);
 }
 
 main();

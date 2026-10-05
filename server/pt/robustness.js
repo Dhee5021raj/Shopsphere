@@ -23,7 +23,7 @@ const { computeSizes } = require('../pt/transfer');
 const { collectEnvInfo } = require('../pt/envInfo');
 
 const LOG_DIR = path.join(__dirname, '..', 'logs');
-const LOG_FILE = path.join(LOG_DIR, 'pt-log.jsonl');
+const LOG_FILE = process.env.PT_LOG || path.join(LOG_DIR, 'pt-log.jsonl');
 
 function parseArgs(argv) {
   const o = {

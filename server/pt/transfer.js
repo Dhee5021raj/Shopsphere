@@ -71,16 +71,32 @@ async function runTransfer(spec, options = {}) {
   const setCache = new Map(); // alias -> Map(field -> FilterSet)
   const invalidate = (alias) => setCache.delete(alias);
 
+  // Returns { size, set }. `set` is null when the distinct set exceeds the cap
+  // (we count first so we never materialise a >16MB distinct result).
   async function getSet(alias, field) {
     let perAlias = setCache.get(alias);
     if (!perAlias) { perAlias = new Map(); setCache.set(alias, perAlias); }
     if (perAlias.has(field)) return perAlias.get(field);
     const Model = modelForCollection(spec.relations.find((r) => r.alias === alias).collection);
     const match = { $and: [localFilters.get(alias), constraintsToMatch(constraints.get(alias))] };
-    const values = await Model.distinct(field, match);
-    const s = makeSet(values, setKind);
-    perAlias.set(field, s);
-    return s;
+    const counted = await Model.aggregate(
+      [{ $match: match }, { $group: { _id: `$${field}` } }, { $count: 'n' }],
+      { allowDiskUse: true }
+    );
+    const size = counted.length ? counted[0].n : 0;
+    let entry;
+    if (size > cap) {
+      entry = { size, values: null, set: null };
+    } else {
+      const docs = await Model.aggregate(
+        [{ $match: match }, { $group: { _id: `$${field}` } }, { $project: { _id: 0, v: '$_id' } }],
+        { allowDiskUse: true }
+      );
+      const values = docs.map((d) => d.v);
+      entry = { size, values, set: makeSet(values, setKind) };
+    }
+    perAlias.set(field, entry);
+    return entry;
   }
 
   const stats = [];
@@ -88,7 +104,7 @@ async function runTransfer(spec, options = {}) {
     const { target, filterBy, direction, on } = step;
     const started = Date.now();
     const incoming = await getSet(filterBy, on.filterField);
-    const keysIn = incoming.size();
+    const keysIn = incoming.size;
 
     if (keysIn > cap) {
       const skipped = {
@@ -103,7 +119,7 @@ async function runTransfer(spec, options = {}) {
       continue;
     }
 
-    constraints.get(target).push({ field: on.targetField, set: incoming });
+    constraints.get(target).push({ field: on.targetField, set: incoming.set });
     invalidate(target);
 
     const tModel = modelForCollection(spec.relations.find((r) => r.alias === target).collection);
@@ -112,8 +128,8 @@ async function runTransfer(spec, options = {}) {
 
     const keysOut = {};
     for (const of of outgoingFields(schedule.graph, target)) {
-      const s = await getSet(target, of.field);
-      keysOut[`${target}.${of.field}`] = s.size();
+      const e = await getSet(target, of.field);
+      keysOut[`${target}.${of.field}`] = e.size;
     }
 
     stats.push({

@@ -15,7 +15,7 @@
     "bench": "node pt/robustness.js",
     "bench:report": "node benchmarks/report.js",
     "repro": "node scripts/repro.js",
-    "test:pt": "node --test tests/"
+    "test:pt": "node --test tests/*.test.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
