@@ -6,7 +6,8 @@ const {
   getAllVendorsAdmin,
   updateVendorStatus,
   getAllOrdersAdmin,
-  updateOrderStatusAdmin
+  updateOrderStatusAdmin,
+  getPtLog
 } = require('../controllers/adminController');
 const { protect, authorizeRoles } = require('../middleware/authMiddleware');
 
@@ -21,5 +22,8 @@ router.put('/vendors/:id/status', updateVendorStatus);
 
 router.get('/orders', getAllOrdersAdmin);
 router.put('/orders/:id/status', updateOrderStatusAdmin);
+
+// mongo-pt shadow log (Step 7)
+router.get('/pt-log', getPtLog);
 
 module.exports = router;
