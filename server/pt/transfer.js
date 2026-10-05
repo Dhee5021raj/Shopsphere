@@ -61,6 +61,7 @@ async function runTransfer(spec, options = {}) {
   const cap = options.cap || incomingCap();
   const now = options.now || new Date();
   const sizes = options.sizes || {};
+  const setKind = options.setKind || null; // 'exact' | 'bloom' | null(=env)
   const schedule = buildSchedule(spec, sizes);
 
   const localFilters = new Map();
@@ -77,7 +78,7 @@ async function runTransfer(spec, options = {}) {
     const Model = modelForCollection(spec.relations.find((r) => r.alias === alias).collection);
     const match = { $and: [localFilters.get(alias), constraintsToMatch(constraints.get(alias))] };
     const values = await Model.distinct(field, match);
-    const s = makeSet(values);
+    const s = makeSet(values, setKind);
     perAlias.set(field, s);
     return s;
   }

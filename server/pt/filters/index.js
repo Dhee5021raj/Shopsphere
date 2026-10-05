@@ -35,6 +35,7 @@ class ExactSet {
     for (const v of values) this.add(v);
   }
   add(v) {
+    if (v === null || v === undefined) return; // drop null/undefined join keys
     const k = String(v);
     if (!this._seen.has(k)) { this._seen.add(k); this._values.push(v); }
   }
@@ -59,6 +60,7 @@ class BloomFilterSet {
     return out;
   }
   add(v) {
+    if (v === null || v === undefined) return; // drop null/undefined join keys
     for (const h of this._hashes(v)) this._bytes[h >> 3] |= (1 << (h & 7));
     this._n++;
   }
@@ -85,8 +87,10 @@ class BloomFilterSet {
   }
 }
 
-function makeSet(values) {
-  return process.env.PT_BLOOM === '1' ? new BloomFilterSet(values) : new ExactSet(values);
+function makeSet(values, kind) {
+  const clean = (values || []).filter((v) => v !== null && v !== undefined);
+  const k = kind || (process.env.PT_BLOOM === '1' ? 'bloom' : 'exact');
+  return k === 'bloom' ? new BloomFilterSet(clean) : new ExactSet(clean);
 }
 
 /** Probe whether this deployment allows server-side $function (used by Bloom mode). */
