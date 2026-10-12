@@ -21,6 +21,9 @@ const { runNaive, runReduced, resultsEqual, checksum, fullCollectionOf } = requi
 
 const LOG_DIR = path.join(__dirname, '..', 'logs');
 const LOG_FILE = process.env.PT_LOG || path.join(LOG_DIR, 'pt-log.jsonl');
+// Single-flight lock shared with middleware/ptShadow.js: removed when this run
+// finishes so the next trigger can fire.
+const LOCK_FILE = path.join(LOG_DIR, '.pt-shadow.lock');
 
 function arg(name, dflt) {
   const hit = process.argv.slice(2).find((a) => a.startsWith(`--${name}=`));
@@ -42,7 +45,11 @@ async function main() {
     process.exit(1);
   }
   const spec = byName[specName];
-  const order = spec.relations.map((r) => r.alias); // default join order
+  // Naive/reduced join order. Defaults to the spec's declared relation order,
+  // but the caller may pin an order (e.g. a bad one) so the reduction win is
+  // visible in the live app.
+  const orderArg = arg('order', null);
+  const order = orderArg ? orderArg.split('>').map((s) => s.trim()).filter(Boolean) : spec.relations.map((r) => r.alias);
 
   fs.mkdirSync(LOG_DIR, { recursive: true });
   await connectBench();
@@ -105,6 +112,7 @@ async function main() {
     console.log(`[pt-shadow] ${specName} naive=${naiveMs}ms reduced=${totalMs}ms speedup=${rec.speedup} equal=${eq.equal}`);
   } finally {
     await disconnectBench();
+    try { fs.unlinkSync(LOCK_FILE); } catch (_) { /* lock already gone */ }
   }
 }
 

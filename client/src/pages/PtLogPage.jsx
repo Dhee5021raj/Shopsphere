@@ -10,19 +10,24 @@ const PtLogPage = ({ onToast }) => {
   const [records, setRecords] = useState([]);
   const [loading, setLoading] = useState(true);
 
-  const load = async () => {
-    setLoading(true);
+  const load = React.useCallback(async (silent = false) => {
+    if (!silent) setLoading(true);
     try {
       const { data } = await api.get('/admin/pt-log');
       setRecords(Array.isArray(data) ? data : []);
     } catch (err) {
-      if (onToast) onToast('Could not load mongo-pt log', 'error');
+      if (!silent && onToast) onToast('Could not load mongo-pt log', 'error');
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
-  };
+  }, [onToast]);
 
-  useEffect(() => { load(); }, []);
+  // Poll so comparisons appear while a background run finishes.
+  useEffect(() => {
+    load(false);
+    const id = setInterval(() => load(true), 5000);
+    return () => clearInterval(id);
+  }, [load]);
 
   const shadows = records.filter((r) => r.kind === 'shadow');
 
@@ -43,7 +48,7 @@ const PtLogPage = ({ onToast }) => {
           </div>
           <div className="flex items-center gap-3">
             <button
-              onClick={load}
+              onClick={() => load(false)}
               className="flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold bg-slate-100 hover:bg-slate-200 border border-slate-200 text-slate-700 transition-all"
             >
               <RefreshCw size={14} /> Refresh

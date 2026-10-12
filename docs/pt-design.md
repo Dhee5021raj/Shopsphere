@@ -9,7 +9,7 @@ MongoDB inspired by:
 
 The goal of the project (a DBMS course project on query optimization) is to show the
 paper's central claim — **join-order robustness** — on MongoDB: after a full semi-join
-reduction ("the transfer phase"), the joθ phase becomes insensitive to the join order it
+reduction ("the transfer phase"), the join phase becomes insensitive to the join order it
 is executed in, because every intermediate result is bounded by the final output.
 
 The paper's algorithm is **Robust Predicate Transfer (RPT)**. RPT = *Yannakakis-style
