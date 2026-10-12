@@ -13,8 +13,10 @@ import {
   Plus, 
   TrendingUp, 
   PieChart, 
-  Layers
+  Layers,
+  Activity
 } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid, BarChart, Bar } from 'recharts';
 import api from '../services/api';
 
@@ -198,6 +200,12 @@ const AdminDashboardPage = ({ onToast }) => {
           >
             Categories ({categories.length})
           </button>
+          <Link
+            to="/admin/pt-log"
+            className="px-4 py-2 rounded-xl text-xs font-bold text-indigo-600 hover:text-indigo-800 flex items-center gap-1.5 transition-all"
+          >
+            <Activity size={14} /> mongo-pt Log
+          </Link>
         </div>
       </div>
 

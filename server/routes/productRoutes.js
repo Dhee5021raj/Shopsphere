@@ -11,8 +11,11 @@ const {
   deleteProduct
 } = require('../controllers/productController');
 const { protect, authorizeRoles } = require('../middleware/authMiddleware');
+const ptShadow = require('../middleware/ptShadow');
 
-router.get('/', getProducts);
+// ptShadow fires only on real searches/category browses (see requireQuery) and
+// never blocks the response.
+router.get('/', ptShadow, getProducts);
 router.get('/featured', getFeaturedProducts);
 router.get('/trending', getTrendingProducts);
 router.get('/:id', getProductById);

@@ -15,6 +15,11 @@ logs/
 *.log
 npm-debug.log*
 
+# mongo-pt benchmark artifacts (local mongod data, temp exports)
+.mongo-bench-data/
+*.parquet
+duckdb/*.duckdb
+
 # OS files
 .DS_Store
 Thumbs.db

@@ -1,3 +1,5 @@
+const fs = require('fs');
+const path = require('path');
 const User = require('../models/User');
 const Vendor = require('../models/Vendor');
 const Product = require('../models/Product');
@@ -106,11 +108,29 @@ const updateOrderStatusAdmin = async (req, res) => {
   }
 };
 
+// @desc    Get the last 100 mongo-pt records (shadow + benchmark log)
+// @route   GET /api/admin/pt-log
+const getPtLog = async (req, res) => {
+  try {
+    const logFile = process.env.PT_LOG || path.join(__dirname, '..', 'logs', 'pt-log.jsonl');
+    if (!fs.existsSync(logFile)) return res.json([]);
+    const lines = fs.readFileSync(logFile, 'utf8').split('\n').filter(Boolean);
+    const records = [];
+    for (const line of lines.slice(-100)) {
+      try { records.push(JSON.parse(line)); } catch (_) { /* skip malformed */ }
+    }
+    res.json(records.reverse()); // newest first
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
 module.exports = {
   getAllUsers,
   toggleBlockUser,
   getAllVendorsAdmin,
   updateVendorStatus,
   getAllOrdersAdmin,
-  updateOrderStatusAdmin
+  updateOrderStatusAdmin,
+  getPtLog
 };

@@ -18,6 +18,7 @@ import WishlistPage from './pages/WishlistPage';
 import CustomerDashboardPage from './pages/CustomerDashboardPage';
 import VendorDashboardPage from './pages/VendorDashboardPage';
 import AdminDashboardPage from './pages/AdminDashboardPage';
+import PtLogPage from './pages/PtLogPage';
 import LoginPage from './pages/LoginPage';
 import RegisterPage from './pages/RegisterPage';
 
@@ -103,6 +104,14 @@ function App() {
                     element={
                       <ProtectedRoute allowedRoles={['admin']}>
                         <AdminDashboardPage onToast={showToast} />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="/admin/pt-log"
+                    element={
+                      <ProtectedRoute allowedRoles={['admin']}>
+                        <PtLogPage onToast={showToast} />
                       </ProtectedRoute>
                     }
                   />
