@@ -83,7 +83,9 @@ function ptShadow(req, res, next) {
   res.on('finish', () => {
     try {
       const match = matchShadow(req.originalUrl || req.url);
-      if (match) scheduleShadow(match, (req.originalUrl || req.url).split('?')[0]);
+      if (match)      // Keep the full URL (incl. query) so the log shows WHAT the user did —
+      // e.g. `/api/products?search=laptop` — not just that something fired.
+      scheduleShadow(match, (req.originalUrl || req.url));
     } catch (e) {
       console.error('[pt-shadow] schedule failed:', e.message);
     }
