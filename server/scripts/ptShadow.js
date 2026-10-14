@@ -93,6 +93,7 @@ async function main() {
       kind: 'shadow',
       trigger,
       spec: specName,
+      description: spec.description,
       order: order.join('>'),
       runs,
       naive_ms: +naiveMs.toFixed(1),
@@ -111,7 +112,9 @@ async function main() {
     fs.appendFileSync(LOG_FILE, JSON.stringify(rec) + '\n');
     console.log(`[pt-shadow] ${specName} naive=${naiveMs}ms reduced=${totalMs}ms speedup=${rec.speedup} equal=${eq.equal}`);
   } finally {
-    await disconnectBench();
+    // Release the single-flight lock LAST and unconditionally — if disconnectBench
+    // throws, the lock must still be removed or every future trigger gets skipped.
+    try { await disconnectBench(); } catch (e) { console.error('[pt-shadow] disconnect:', e.message); }
     try { fs.unlinkSync(LOCK_FILE); } catch (_) { /* lock already gone */ }
   }
 }

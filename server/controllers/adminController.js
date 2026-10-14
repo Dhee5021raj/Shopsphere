@@ -125,6 +125,27 @@ const getPtLog = async (req, res) => {
   }
 };
 
+// @desc    Is a mongo-pt measurement running right now? (reads the single-flight lock)
+// @route   GET /api/admin/pt-status
+const getPtStatus = async (req, res) => {
+  try {
+    const lockFile = path.join(__dirname, '..', 'logs', '.pt-shadow.lock');
+    const STALE_MS = 15 * 60 * 1000; // same stale window as middleware/ptShadow.js
+    let running = false;
+    let startedAt = null;
+    try {
+      const mtimeMs = fs.statSync(lockFile).mtimeMs;
+      if (Date.now() - mtimeMs < STALE_MS) {
+        running = true;
+        startedAt = new Date(mtimeMs).toISOString();
+      }
+    } catch (_) { /* no lock file → idle */ }
+    res.json({ running, startedAt, staleAfterMin: STALE_MS / 60000, typicalRunSeconds: 60 });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
 module.exports = {
   getAllUsers,
   toggleBlockUser,
@@ -132,5 +153,6 @@ module.exports = {
   updateVendorStatus,
   getAllOrdersAdmin,
   updateOrderStatusAdmin,
-  getPtLog
+  getPtLog,
+  getPtStatus
 };
