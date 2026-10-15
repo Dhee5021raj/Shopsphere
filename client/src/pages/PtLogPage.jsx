@@ -27,7 +27,7 @@ const SPEC_INFO = {
   user_scoped_spend_30d: 'Spend per product for a single user over 30 days (user-scoped — extremely selective).',
   low_rating_reviews_by_category: 'Count/avg of low-rating (≤2★) reviews per category (reviews▸products▸categories▸vendors). A known no-win case.',
   vendor_category_revenue_365d: 'Revenue for one vendor + one category over 365 days.',
-  user_vendor_category_spend_30d: 'Spend across 6 relations (user+vendor+category+30d). Heaviest spec — transfer+materialization often dominates at small scales.'
+  user_vendor_category_spend_30d: 'Spend per (vendor × category) for one user over the last 30 days. The heaviest spec — 6 relations joined, so transfer + materialization often dominate at small scales. An honest worst case for the optimization.'
 };
 const KIND_INFO = {
   shadow: 'Live measurement fired by a site action (product search or analytics page) — the row you demo',
@@ -61,6 +61,38 @@ const userAction = (trigger) => {
     if (pathname.startsWith('/api/analytics/vendor')) return 'loaded the Vendor Dashboard';
     return pathname;
   } catch (_) { return trigger; }
+};
+
+// Separate live indicator per benchmark phase. The shadow runner measures the
+// REDUCED (fast) side first and writes its finish time to the status file, so
+// even if the naive side grinds for minutes you see "REDUCED FINISHED · Xms"
+// while "NAIVE RUNNING" is still counting.
+const phaseChip = (phase, runStatus, nowTick) => {
+  const p = (runStatus && runStatus[phase]) || null;
+  if (!p) return null;
+  const label = phase === 'naive' ? 'NAIVE (slow)' : 'REDUCED (faster)';
+  if (p.done) {
+    return (
+      <span key={phase} className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-[11px] font-extrabold bg-emerald-100 text-emerald-700 border border-emerald-200" title={`${label} side finished`}>
+        <span className="w-2 h-2 rounded-full bg-emerald-500" />
+        {label} FINISHED · {fmtMs(p.ms)}
+      </span>
+    );
+  }
+  if (p.running && p.startedAt) {
+    const s = Math.max(0, Math.round((nowTick - new Date(p.startedAt).getTime()) / 1000));
+    return (
+      <span key={phase} className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-[11px] font-extrabold bg-amber-100 text-amber-700 border border-amber-200" title={`${label} side currently being measured`}>
+        <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
+        {label} RUNNING · {s} s elapsed
+      </span>
+    );
+  }
+  return (
+    <span key={phase} className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-[11px] font-extrabold bg-slate-100 text-slate-500 border border-slate-200">
+      {label} QUEUED
+    </span>
+  );
 };
 
 const PtLogPage = ({ onToast }) => {
@@ -102,23 +134,37 @@ const PtLogPage = ({ onToast }) => {
               <Activity size={30} />
             </div>
             <div>
-              <h1 className="text-2xl font-extrabold text-slate-900 flex items-center gap-3">
+              <h1 className="text-2xl font-extrabold text-slate-900">
                 mongo-pt Shadow Log
-                <span className={`inline-flex items-center gap-2 px-3 py-1 rounded-full text-[11px] font-extrabold ${
-                  runStatus.running
-                    ? 'bg-amber-100 text-amber-700 border border-amber-200'
-                    : 'bg-slate-100 text-slate-500 border border-slate-200'
-                }`}>
-                  {runStatus.running && <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />}
-                  {runStatus.running && runStatus.startedAt
-                    ? `MEASUREMENT RUNNING · ${Math.round(((nowTick - new Date(runStatus.startedAt).getTime()) / 1000))} s elapsed`
-                    : 'IDLE — no measurement running'}
-                </span>
               </h1>
+              <div className="flex flex-wrap items-center gap-2 mt-2">
+                {runStatus.running ? (
+                  <>
+                    {runStatus.reduced || runStatus.naive ? (
+                      <>
+                        {phaseChip('reduced', runStatus, nowTick)}
+                        {phaseChip('naive', runStatus, nowTick)}
+                      </>
+                    ) : (
+                      /* Measurement claimed (lock) but the child hasn't written
+                      per-phase status yet — show a generic starting chip so the
+                      indicators never go silently empty. */
+                      <span className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-[11px] font-extrabold bg-amber-100 text-amber-700 border border-amber-200">
+                        <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
+                        MEASUREMENT STARTING{runStatus.startedAt ? ` · ${Math.max(0, Math.round((nowTick - new Date(runStatus.startedAt).getTime()) / 1000))} s` : ''}
+                      </span>
+                    )}
+                  </>
+                ) : (
+                  <span className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-[11px] font-extrabold bg-slate-100 text-slate-500 border border-slate-200">
+                    IDLE — no measurement running
+                  </span>
+                )}
+              </div>
               <p className="text-xs text-slate-500 mt-1">
                 {runStatus.running
-                  ? 'A background benchmark is being measured right now — your request was never slowed. A new row appears here (every 5 s) when it finishes — typical run ≈ 1 min on the current dataset.'
-                  : 'Search the Products page (e.g. type "laptop") to fire one; the chip above turns amber while it runs. Last 100 records log shown below.'}
+                  ? 'A background benchmark is being measured right now — your request was never slowed. The reduced (fast) side finishes in seconds; the naive side keeps grinding until the log row appears (every 5 s). Each chip above shows its own phase.'
+                  : 'Search the Products page (e.g. type "laptop") to fire one; you\'ll get a separate chip for the naive and the reduced (faster) measurement. Last 100 records log shown below.'}
               </p>
               <p className="text-xs text-slate-500">{shadows.length} shadow runs in view.</p>
             </div>

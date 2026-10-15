@@ -180,15 +180,37 @@ const seedData = async () => {
       { name: 'Indoor Herb Garden Grow Kit (3 Varieties)',   description: 'Self-watering bamboo planter box, organic coco-peat discs, heirloom basil, mint & coriander seeds. Ready to grow in 7 days.',price: 1299,  discountPrice: 899,   stock: 80, category: c['Plants & Garden'], vendor: v3._id, images: ['https://images.unsplash.com/photo-1466692476868-aef1dfb1e735?w=600'], isFeatured: false, rating: 4.8, numReviews: 110, soldCount: 380 }
     ];
 
+    // ── 5b. SPREAD EACH CATEGORY'S PRODUCTS ACROSS MULTIPLE VENDORS ──
+    // The per-category product blocks above are each hard-tied to one vendor,
+    // so browsing a single category showed exactly ONE vendor in the vendor
+    // filter. Reassign vendors round-robin (per category, with a rotating
+    // offset so ALL 5 vendors lead different categories) so the vendor filter
+    // actually has options inside every category.
+    const productsByCategory = new Map();
+    for (const p of productsData) {
+      const key = p.category.toString();
+      if (!productsByCategory.has(key)) productsByCategory.set(key, []);
+      productsByCategory.get(key).push(p);
+    }
+    let poolOffset = 0;
+    for (const [, group] of productsByCategory) {
+      for (let i = 0; i < group.length; i++) {
+        group[i].vendor = vendors[(poolOffset + i) % vendors.length]._id;
+      }
+      poolOffset += 2; // different categories start the rotation at different vendors
+    }
+
     const createdProducts = await Product.insertMany(productsData);
     console.log(`[ShopSphere Seed] Created ${createdProducts.length} unique products.`);
 
-    // Sample order
+    // Sample order — item vendors must match the products' (now spread-out)
+    // vendors, not a hardcoded vendors[0], or the admin order view shows the
+    // wrong store next to each item.
     await Order.create({
       customer: customer1._id,
       items: [
-        { product: createdProducts[0]._id, vendor: vendors[0]._id, name: createdProducts[0].name, quantity: 1, price: createdProducts[0].discountPrice, status: 'Delivered' },
-        { product: createdProducts[1]._id, vendor: vendors[0]._id, name: createdProducts[1].name, quantity: 1, price: createdProducts[1].discountPrice, status: 'Delivered' }
+        { product: createdProducts[0]._id, vendor: createdProducts[0].vendor, name: createdProducts[0].name, quantity: 1, price: createdProducts[0].discountPrice, status: 'Delivered' },
+        { product: createdProducts[1]._id, vendor: createdProducts[1].vendor, name: createdProducts[1].name, quantity: 1, price: createdProducts[1].discountPrice, status: 'Delivered' }
       ],
       shippingAddress: customer1.addresses[0],
       totalAmount: createdProducts[0].discountPrice + createdProducts[1].discountPrice,

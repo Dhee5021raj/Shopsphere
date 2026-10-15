@@ -147,7 +147,7 @@ const specs = [
   },
   {
     name: 'user_vendor_category_spend_30d',
-    description: 'Spend per (vendor, category) for one user over 30 days (6 relations).',
+    description: 'Spend per (vendor × category) for one user over the last 30 days — the heaviest spec (6 relations); transfer + materialization often dominate here.',
     relations: [
       { alias: 'u', collection: 'users', localFilter: { email: 'user7@bench.local' } },
       { alias: 'o', collection: 'orders', localFilter: { created_at: { $gte: '@now-30d' } } },

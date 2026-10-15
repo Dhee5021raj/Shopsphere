@@ -125,22 +125,66 @@ const getPtLog = async (req, res) => {
   }
 };
 
-// @desc    Is a mongo-pt measurement running right now? (reads the single-flight lock)
+// @desc    Is a mongo-pt measurement running right now, and which phase?
 // @route   GET /api/admin/pt-status
+//
+// The shadow child writes `.pt-shadow-status.json` with per-phase progress
+// (reduced runs first, then naive) and its pid, so the UI can show
+// "REDUCED FINISHED" while the naive side is still measuring. Liveness is
+// verified via `process.kill(pid, 0)` and the file's updatedAt, so a crashed
+// child can never keep the indicator running forever (the old bug that stuck
+// "MEASUREMENT RUNNING · Ns elapsed" on screen for minutes).
 const getPtStatus = async (req, res) => {
   try {
-    const lockFile = path.join(__dirname, '..', 'logs', '.pt-shadow.lock');
-    const STALE_MS = 15 * 60 * 1000; // same stale window as middleware/ptShadow.js
+    const logDir = path.join(__dirname, '..', 'logs');
+    const statusFile = path.join(logDir, '.pt-shadow-status.json');
+    const STALE_MS = 15 * 60 * 1000; // hard cap: a phantom run is never shown past this
+
+    const isAlive = (pid) => {
+      try { process.kill(pid, 0); return true; } catch (_) { return false; }
+    };
+    const shape = (p) => p ? {
+      running: p.phase === 'running',
+      done: p.phase === 'done',
+      startedAt: p.startedAt || null,
+      finishedAt: p.finishedAt || null,
+      ms: p.ms != null ? p.ms : null
+    } : null;
+
+    // 1) Preferred source: the live status file written by scripts/ptShadow.js.
+    try {
+      const rec = JSON.parse(fs.readFileSync(statusFile, 'utf8'));
+      const updatedAtMs = new Date(rec.updatedAt || rec.startedAt).getTime();
+      const fresh = Date.now() - updatedAtMs < STALE_MS && isAlive(rec.pid);
+      const phases = { naive: shape(rec.naive), reduced: shape(rec.reduced) };
+      // A phase belongs to a live run only if the whole record is fresh:
+      // gate every phase's `running` on it so a dead child cannot expose a
+      // phantom "RUNNING" phase even when the overall flag is false.
+      if (!fresh) {
+        if (phases.naive) phases.naive.running = false;
+        if (phases.reduced) phases.reduced.running = false;
+      }
+      const anyPhase = fresh && Object.values(phases).some((p) => p && (p.running || p.done));
+      return res.json({
+        running: anyPhase,
+        startedAt: rec.startedAt || null,
+        ...phases,
+        staleAfterMin: STALE_MS / 60000,
+        typicalRunSeconds: 60
+      });
+    } catch (_) { /* no/unreadable status file -> fall back to the legacy lock */ }
+
+    // 2) Legacy fallback (older shadow child without a status file): the lock.
     let running = false;
     let startedAt = null;
     try {
-      const mtimeMs = fs.statSync(lockFile).mtimeMs;
+      const mtimeMs = fs.statSync(path.join(logDir, '.pt-shadow.lock')).mtimeMs;
       if (Date.now() - mtimeMs < STALE_MS) {
         running = true;
         startedAt = new Date(mtimeMs).toISOString();
       }
     } catch (_) { /* no lock file → idle */ }
-    res.json({ running, startedAt, staleAfterMin: STALE_MS / 60000, typicalRunSeconds: 60 });
+    res.json({ running, startedAt, naive: null, reduced: null, staleAfterMin: STALE_MS / 60000, typicalRunSeconds: 60 });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
