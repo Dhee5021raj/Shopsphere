@@ -69,11 +69,19 @@ function scheduleShadow(match, trigger) {
   }
   const args = [SCRIPT, `--spec=${match.spec}`, `--trigger=${trigger}`];
   if (match.order) args.push(`--order=${match.order}`);
-  const child = spawn(process.execPath, args, {
-    detached: true,
-    stdio: 'ignore',
-    env: process.env
-  });
+  let child;
+  try {
+    child = spawn(process.execPath, args, {
+      detached: true,
+      stdio: 'ignore',
+      env: process.env
+    });
+  } catch (e) {
+    // Failed to even start the child -> release the single-flight lock NOW or
+    // every future trigger is skipped for up to LOCK_STALE_MS.
+    try { fs.unlinkSync(LOCK_FILE); } catch (_) { /* already gone */ }
+    return null;
+  }
   child.unref();
   return child.pid;
 }
