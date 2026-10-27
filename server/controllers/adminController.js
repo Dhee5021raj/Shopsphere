@@ -4,6 +4,7 @@ const User = require('../models/User');
 const Vendor = require('../models/Vendor');
 const Product = require('../models/Product');
 const Order = require('../models/Order');
+const { byName: specByName } = require('../pt/specs');
 
 // @desc    Get all users
 // @route   GET /api/admin/users
@@ -108,6 +109,43 @@ const updateOrderStatusAdmin = async (req, res) => {
   }
 };
 
+const mapLogRecord = (r) => {
+  if (!r || typeof r !== 'object') return r;
+  const standard_ms = r.standard_ms != null ? r.standard_ms : (r.naive_ms != null ? r.naive_ms : null);
+  const naive_ms = r.naive_ms != null ? r.naive_ms : (r.standard_ms != null ? r.standard_ms : null);
+  const optimized_ms = r.optimized_ms != null ? r.optimized_ms : (r.reduced_ms != null ? r.reduced_ms : (r.total_ms != null ? r.total_ms : null));
+  const reduced_ms = r.reduced_ms != null ? r.reduced_ms : (r.optimized_ms != null ? r.optimized_ms : (r.total_ms != null ? r.total_ms : null));
+
+  const best = r.best && typeof r.best === 'object' ? {
+    ...r.best,
+    standard_ms: r.best.standard_ms != null ? r.best.standard_ms : (r.best.naive_ms != null ? r.best.naive_ms : null),
+    naive_ms: r.best.naive_ms != null ? r.best.naive_ms : (r.best.standard_ms != null ? r.best.standard_ms : null),
+    optimized_ms: r.best.optimized_ms != null ? r.best.optimized_ms : (r.best.reduced_ms != null ? r.best.reduced_ms : (r.best.total_ms != null ? r.best.total_ms : null)),
+    reduced_ms: r.best.reduced_ms != null ? r.best.reduced_ms : (r.best.optimized_ms != null ? r.best.optimized_ms : (r.best.total_ms != null ? r.best.total_ms : null)),
+  } : r.best;
+
+  const worst_case = r.worst_case && typeof r.worst_case === 'object' ? {
+    ...r.worst_case,
+    standard_ms: r.worst_case.standard_ms != null ? r.worst_case.standard_ms : (r.worst_case.naive_ms != null ? r.worst_case.naive_ms : null),
+    naive_ms: r.worst_case.naive_ms != null ? r.worst_case.naive_ms : (r.worst_case.standard_ms != null ? r.worst_case.standard_ms : null),
+    optimized_ms: r.worst_case.optimized_ms != null ? r.worst_case.optimized_ms : (r.worst_case.reduced_ms != null ? r.worst_case.reduced_ms : (r.worst_case.total_ms != null ? r.worst_case.total_ms : null)),
+    reduced_ms: r.worst_case.reduced_ms != null ? r.worst_case.reduced_ms : (r.worst_case.optimized_ms != null ? r.worst_case.optimized_ms : (r.worst_case.total_ms != null ? r.worst_case.total_ms : null)),
+  } : r.worst_case;
+
+  const desc = r.description || (r.spec && specByName && specByName[r.spec] ? specByName[r.spec].description : '');
+
+  return {
+    ...r,
+    standard_ms,
+    optimized_ms,
+    naive_ms,
+    reduced_ms,
+    best,
+    worst_case,
+    ...(desc ? { description: desc } : {})
+  };
+};
+
 // @desc    Get the last 100 mongo-pt records (shadow + benchmark log)
 // @route   GET /api/admin/pt-log
 const getPtLog = async (req, res) => {
@@ -117,7 +155,10 @@ const getPtLog = async (req, res) => {
     const lines = fs.readFileSync(logFile, 'utf8').split('\n').filter(Boolean);
     const records = [];
     for (const line of lines.slice(-100)) {
-      try { records.push(JSON.parse(line)); } catch (_) { /* skip malformed */ }
+      try {
+        const raw = JSON.parse(line);
+        records.push(mapLogRecord(raw));
+      } catch (_) { /* skip malformed */ }
     }
     res.json(records.reverse()); // newest first
   } catch (error) {
@@ -129,8 +170,8 @@ const getPtLog = async (req, res) => {
 // @route   GET /api/admin/pt-status
 //
 // The shadow child writes `.pt-shadow-status.json` with per-phase progress
-// (reduced runs first, then naive) and its pid, so the UI can show
-// "REDUCED FINISHED" while the naive side is still measuring. Liveness is
+// (optimized runs first, then standard) and its pid, so the UI can show
+// "OPTIMIZED FINISHED" while the standard side is still measuring. Liveness is
 // verified via `process.kill(pid, 0)` and the file's updatedAt, so a crashed
 // child can never keep the indicator running forever (the old bug that stuck
 // "MEASUREMENT RUNNING · Ns elapsed" on screen for minutes).
@@ -144,8 +185,9 @@ const getPtStatus = async (req, res) => {
       try { process.kill(pid, 0); return true; } catch (_) { return false; }
     };
     const shape = (p) => p ? {
-      running: p.phase === 'running',
-      done: p.phase === 'done',
+      phase: p.phase || (p.running ? 'running' : p.done ? 'done' : 'idle'),
+      running: p.phase === 'running' || p.running === true,
+      done: p.phase === 'done' || p.done === true,
       startedAt: p.startedAt || null,
       finishedAt: p.finishedAt || null,
       ms: p.ms != null ? p.ms : null
@@ -156,13 +198,29 @@ const getPtStatus = async (req, res) => {
       const rec = JSON.parse(fs.readFileSync(statusFile, 'utf8'));
       const updatedAtMs = new Date(rec.updatedAt || rec.startedAt).getTime();
       const fresh = Date.now() - updatedAtMs < STALE_MS && isAlive(rec.pid);
-      const phases = { naive: shape(rec.naive), reduced: shape(rec.reduced) };
+
+      const std = shape(rec.standard || rec.naive);
+      const opt = shape(rec.optimized || rec.reduced);
+      const naive = shape(rec.naive || rec.standard);
+      const reduced = shape(rec.reduced || rec.optimized);
+
+      const phases = {
+        standard: std,
+        optimized: opt,
+        naive: naive,
+        reduced: reduced
+      };
+
       // A phase belongs to a live run only if the whole record is fresh:
       // gate every phase's `running` on it so a dead child cannot expose a
       // phantom "RUNNING" phase even when the overall flag is false.
       if (!fresh) {
-        if (phases.naive) phases.naive.running = false;
-        if (phases.reduced) phases.reduced.running = false;
+        for (const k of ['standard', 'optimized', 'naive', 'reduced']) {
+          if (phases[k]) {
+            phases[k].running = false;
+            if (phases[k].phase === 'running') phases[k].phase = 'idle';
+          }
+        }
       }
       const anyPhase = fresh && Object.values(phases).some((p) => p && (p.running || p.done));
       return res.json({
@@ -184,7 +242,229 @@ const getPtStatus = async (req, res) => {
         startedAt = new Date(mtimeMs).toISOString();
       }
     } catch (_) { /* no lock file → idle */ }
-    res.json({ running, startedAt, naive: null, reduced: null, staleAfterMin: STALE_MS / 60000, typicalRunSeconds: 60 });
+    res.json({
+      running,
+      startedAt,
+      standard: null,
+      optimized: null,
+      naive: null,
+      reduced: null,
+      staleAfterMin: STALE_MS / 60000,
+      typicalRunSeconds: 60
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// @desc    Compute aggregate performance metrics from the pt-log for the dashboard
+// @route   GET /api/admin/pt-metrics
+//
+// Metrics derived from ALL shadow records (live standard-vs-optimized comparisons):
+//   - avgStandardMs / avgOptimizedMs     : mean latency per side (ms)
+//   - throughputStandard / throughputOptimized : queries per second (1000 / avgMs)
+//   - avgSpeedup / maxSpeedup / minSpeedup : speedup factor distribution
+//   - robustnessGap               : max_standard_ms / min_standard_ms (order-sensitivity)
+//   - winRate                     : % of runs where PT was faster (speedup > 1)
+//   - avgOverheadPct              : mean transfer+mat overhead as % of optimized time
+//   - avgTransferMs / avgMatMs    : mean transfer and materialisation costs
+//   - perSpecStats                : per-spec breakdown with description & metrics
+//   - totalRuns                   : total shadow records counted
+const getPtMetrics = async (req, res) => {
+  try {
+    const logFile = process.env.PT_LOG || path.join(__dirname, '..', 'logs', 'pt-log.jsonl');
+    if (!fs.existsSync(logFile)) return res.json({ totalRuns: 0, noData: true });
+
+    const lines = fs.readFileSync(logFile, 'utf8').split('\n').filter(Boolean);
+    const shadows = [];
+    for (const line of lines) {
+      try {
+        const r = JSON.parse(line);
+        // Only count shadow records that have both timing sides measured (supporting standard/optimized and naive/reduced)
+        const hasStd = r.standard_ms != null || r.naive_ms != null;
+        const hasOpt = r.optimized_ms != null || r.reduced_ms != null || r.total_ms != null;
+        if (r.kind === 'shadow' && hasStd && hasOpt) {
+          shadows.push(r);
+        }
+      } catch (_) { /* skip malformed */ }
+    }
+
+    if (shadows.length === 0) return res.json({ totalRuns: 0, noData: true });
+
+    const avg = (arr) => arr.reduce((s, v) => s + v, 0) / arr.length;
+    const median = (arr) => {
+      const s = [...arr].sort((a, b) => a - b);
+      const m = Math.floor(s.length / 2);
+      return s.length % 2 === 0 ? (s[m - 1] + s[m]) / 2 : s[m];
+    };
+
+    const standardTimes = shadows.map((r) => r.naive_ms != null ? r.naive_ms : r.standard_ms);
+    const optimizedTimes = shadows.map((r) => r.reduced_ms != null ? r.reduced_ms : (r.optimized_ms ?? r.total_ms));
+    const speedups      = shadows.filter((r) => r.speedup != null).map((r) => r.speedup);
+    const overheads     = shadows.filter((r) => r.transfer_overhead_pct != null).map((r) => r.transfer_overhead_pct);
+    const transfers     = shadows.filter((r) => r.transfer_ms != null).map((r) => r.transfer_ms);
+    const mats          = shadows.filter((r) => r.materialization_ms != null).map((r) => r.materialization_ms);
+
+    const avgStandardMs   = avg(standardTimes);
+    const avgOptimizedMs = avg(optimizedTimes);
+    const medStandardMs   = median(standardTimes);
+    const medOptimizedMs = median(optimizedTimes);
+
+    // Throughput = how many such queries can be executed per second
+    const throughputStandard  = avgStandardMs  > 0 ? parseFloat((1000 / avgStandardMs).toFixed(4))  : null;
+    const throughputOptimized = avgOptimizedMs > 0 ? parseFloat((1000 / avgOptimizedMs).toFixed(4)) : null;
+
+    // Backward-compatible aliases
+    const avgNaiveMs   = avgStandardMs;
+    const avgReducedMs = avgOptimizedMs;
+    const medNaiveMs   = medStandardMs;
+    const medReducedMs = medOptimizedMs;
+    const throughputNaive   = throughputStandard;
+    const throughputReduced = throughputOptimized;
+
+    // Robustness gap: measures how sensitive standard/naive is to join order (max/min standard time)
+    const robustnessGap = standardTimes.length >= 2 && Math.min(...standardTimes) > 0
+      ? parseFloat((Math.max(...standardTimes) / Math.min(...standardTimes)).toFixed(2))
+      : null;
+
+    // Win rate: fraction of runs where PT reduced latency
+    const wins    = shadows.filter((r) => (r.speedup ?? 0) > 1).length;
+    const winRate = parseFloat(((wins / shadows.length) * 100).toFixed(1));
+
+    // Per-spec breakdown
+    const specMap = {};
+    for (const r of shadows) {
+      const s = r.spec || 'unknown';
+      if (!specMap[s]) {
+        specMap[s] = {
+          descriptions: [],
+          standardTimes: [],
+          optimizedTimes: [],
+          speedups: [],
+          overheads: [],
+          transfers: [],
+          mats: [],
+          timeline: []
+        };
+      }
+      if (r.description) specMap[s].descriptions.push(r.description);
+      const std = r.naive_ms != null ? r.naive_ms : r.standard_ms;
+      const opt = r.reduced_ms != null ? r.reduced_ms : (r.optimized_ms ?? r.total_ms);
+      specMap[s].standardTimes.push(std);
+      specMap[s].optimizedTimes.push(opt);
+      if (r.speedup != null) specMap[s].speedups.push(r.speedup);
+      if (r.transfer_overhead_pct != null) specMap[s].overheads.push(r.transfer_overhead_pct);
+      if (r.transfer_ms != null) specMap[s].transfers.push(r.transfer_ms);
+      if (r.materialization_ms != null) specMap[s].mats.push(r.materialization_ms);
+      specMap[s].timeline.push({
+        ts: r.ts,
+        t: r.ts,
+        spec: r.spec,
+        standard_ms: std,
+        optimized_ms: opt,
+        naive_ms: std,
+        reduced_ms: opt,
+        speedup: r.speedup,
+        transfer_ms: r.transfer_ms,
+        materialization_ms: r.materialization_ms
+      });
+    }
+
+    const perSpecStats = Object.entries(specMap).map(([spec, d]) => {
+      const specWins = d.speedups.filter((sp) => sp > 1).length;
+      const specWinRate = d.speedups.length > 0 ? parseFloat(((specWins / d.speedups.length) * 100).toFixed(1)) : 0;
+      const specGap = d.standardTimes.length >= 2 && Math.min(...d.standardTimes) > 0
+        ? parseFloat((Math.max(...d.standardTimes) / Math.min(...d.standardTimes)).toFixed(2))
+        : null;
+
+      const avgStd = avg(d.standardTimes);
+      const avgOpt = avg(d.optimizedTimes);
+      const medStd = median(d.standardTimes);
+      const medOpt = median(d.optimizedTimes);
+      const tpStd = avgStd > 0 ? parseFloat((1000 / avgStd).toFixed(4)) : null;
+      const tpOpt = avgOpt > 0 ? parseFloat((1000 / avgOpt).toFixed(4)) : null;
+
+      const description = (specByName && specByName[spec]?.description)
+        || d.descriptions.find(Boolean)
+        || (spec.startsWith('live_search') ? `Live search query (${spec.replace(/^live_search_/, '')})` : `Benchmark query spec ${spec}`);
+
+      return {
+        spec,
+        description,
+        runs: d.standardTimes.length,
+        wins: specWins,
+        winRate: specWinRate,
+        // Updated terminology
+        avgStandardMs: parseFloat(avgStd.toFixed(1)),
+        avgOptimizedMs: parseFloat(avgOpt.toFixed(1)),
+        medStandardMs: parseFloat(medStd.toFixed(1)),
+        medOptimizedMs: parseFloat(medOpt.toFixed(1)),
+        throughputStandard: tpStd,
+        throughputOptimized: tpOpt,
+        // Legacy aliases
+        avgNaiveMs: parseFloat(avgStd.toFixed(1)),
+        medNaiveMs: parseFloat(medStd.toFixed(1)),
+        avgReducedMs: parseFloat(avgOpt.toFixed(1)),
+        medReducedMs: parseFloat(medOpt.toFixed(1)),
+        throughputNaive: tpStd,
+        throughputReduced: tpOpt,
+        avgSpeedup: d.speedups.length ? parseFloat(avg(d.speedups).toFixed(2)) : null,
+        maxSpeedup: d.speedups.length ? parseFloat(Math.max(...d.speedups).toFixed(2)) : null,
+        minSpeedup: d.speedups.length ? parseFloat(Math.min(...d.speedups).toFixed(2)) : null,
+        robustnessGap: specGap,
+        avgOverheadPct: d.overheads.length ? parseFloat(avg(d.overheads).toFixed(1)) : null,
+        avgTransferMs: d.transfers.length ? parseFloat(avg(d.transfers).toFixed(1)) : null,
+        avgMatMs: d.mats.length ? parseFloat(avg(d.mats).toFixed(1)) : null,
+        timeline: d.timeline.slice(-20)
+      };
+    });
+
+    // Timeline for the chart: last 20 shadow runs, oldest→newest
+    const timeline = shadows.slice(-20).map((r) => {
+      const std = r.naive_ms != null ? r.naive_ms : r.standard_ms;
+      const opt = r.reduced_ms != null ? r.reduced_ms : (r.optimized_ms ?? r.total_ms);
+      return {
+        ts:           r.ts,
+        t:            r.ts,
+        spec:         r.spec,
+        standard_ms:  std,
+        optimized_ms: opt,
+        naive_ms:     std,
+        reduced_ms:   opt,
+        speedup:      r.speedup,
+        transfer_ms:  r.transfer_ms,
+        materialization_ms: r.materialization_ms,
+      };
+    });
+
+    res.json({
+      totalRuns:          shadows.length,
+      wins,
+      winRate,
+      // Updated terminology
+      avgStandardMs:      parseFloat(avgStandardMs.toFixed(1)),
+      avgOptimizedMs:     parseFloat(avgOptimizedMs.toFixed(1)),
+      medStandardMs:      parseFloat(medStandardMs.toFixed(1)),
+      medOptimizedMs:     parseFloat(medOptimizedMs.toFixed(1)),
+      throughputStandard,
+      throughputOptimized,
+      // Legacy aliases
+      avgNaiveMs:         parseFloat(avgNaiveMs.toFixed(1)),
+      avgReducedMs:       parseFloat(avgReducedMs.toFixed(1)),
+      medNaiveMs:         parseFloat(medNaiveMs.toFixed(1)),
+      medReducedMs:       parseFloat(medReducedMs.toFixed(1)),
+      throughputNaive,
+      throughputReduced,
+      avgSpeedup:         speedups.length ? parseFloat(avg(speedups).toFixed(2)) : null,
+      maxSpeedup:         speedups.length ? parseFloat(Math.max(...speedups).toFixed(2)) : null,
+      minSpeedup:         speedups.length ? parseFloat(Math.min(...speedups).toFixed(2)) : null,
+      robustnessGap,
+      avgOverheadPct:     overheads.length ? parseFloat(avg(overheads).toFixed(1)) : null,
+      avgTransferMs:      transfers.length ? parseFloat(avg(transfers).toFixed(1)) : null,
+      avgMatMs:           mats.length      ? parseFloat(avg(mats).toFixed(1))      : null,
+      perSpecStats,
+      timeline,
+    });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
@@ -198,5 +478,6 @@ module.exports = {
   getAllOrdersAdmin,
   updateOrderStatusAdmin,
   getPtLog,
-  getPtStatus
+  getPtStatus,
+  getPtMetrics,
 };

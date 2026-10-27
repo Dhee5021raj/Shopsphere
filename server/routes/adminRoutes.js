@@ -8,7 +8,8 @@ const {
   getAllOrdersAdmin,
   updateOrderStatusAdmin,
   getPtLog,
-  getPtStatus
+  getPtStatus,
+  getPtMetrics,
 } = require('../controllers/adminController');
 const { protect, authorizeRoles } = require('../middleware/authMiddleware');
 
@@ -28,5 +29,7 @@ router.put('/orders/:id/status', updateOrderStatusAdmin);
 router.get('/pt-log', getPtLog);
 // live measurement status for the run-indicator chip
 router.get('/pt-status', getPtStatus);
+// aggregate performance metrics for the dashboard
+router.get('/pt-metrics', getPtMetrics);
 
 module.exports = router;

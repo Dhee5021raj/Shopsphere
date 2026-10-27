@@ -178,4 +178,45 @@ const specs = [
 const byName = {};
 for (const s of specs) byName[s.name] = s;
 
-module.exports = { specs, byName };
+const escapeRegExp = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/**
+ * Live-search variant (Step 7b): the same join shape as
+ * rare_category_revenue_7d, but the products relation carries the user's
+ * ACTUAL search term and the filters the user applied (minRating / price
+ * range / in-stock / featured), so both naive and reduced sides measure the
+ * query the user really asked for. The demo vendor filter is emulated by the
+ * shadow script AFTER connecting (maps a demo store name deterministically to
+ * a bench `Vendor N`), because the two databases share no supplier ids.
+ *
+ * Trade-off (accepted): per-run numbers are no longer comparable row-to-row
+ * — selectivity changes with the term/filters, and a loose combo can overflow
+ * the $in cap and skip transfer steps.
+ */
+function makeLiveSearchSpec({ search, filters = {} } = {}) {
+  const term = String(search || '').trim().slice(0, 120);
+  if (!term) throw new Error('makeLiveSearchSpec requires a non-empty search term');
+  const spec = JSON.parse(JSON.stringify(byName['rare_category_revenue_7d']));
+  const p = spec.relations.find((r) => r.alias === 'p');
+  p.localFilter = { name: { $regex: escapeRegExp(term), $options: 'i' } };
+  if (filters.minRating != null && !Number.isNaN(Number(filters.minRating))) p.localFilter.rating = { $gte: Number(filters.minRating) };
+  if (filters.minPrice != null || filters.maxPrice != null) {
+    p.localFilter.price = {};
+    if (filters.minPrice != null && !Number.isNaN(Number(filters.minPrice))) p.localFilter.price.$gte = Number(filters.minPrice);
+    if (filters.maxPrice != null && !Number.isNaN(Number(filters.maxPrice))) p.localFilter.price.$lte = Number(filters.maxPrice);
+  }
+  if (filters.inStock) p.localFilter.stock = { $gt: 0 };
+  if (filters.featured) p.localFilter.isFeatured = true;
+  const parts = [];
+  if (filters.minRating != null) parts.push(`minRating ≥ ${filters.minRating}`);
+  if (filters.minPrice != null || filters.maxPrice != null) parts.push(`price ${filters.minPrice != null ? `≥ ${filters.minPrice}` : ''}${filters.minPrice != null && filters.maxPrice != null ? ' and ' : ''}${filters.maxPrice != null ? `≤ ${filters.maxPrice}` : ''}`);
+  if (filters.inStock) parts.push('in stock');
+  if (filters.featured) parts.push('featured');
+  if (filters.vendorName) parts.push(`vendor "${filters.vendorName}" (bench-emulated)`);
+  const safeSlug = (term.toLowerCase().replace(/[^a-z0-9]+/g, '-') + (parts.length ? '-and-filters' : '')).replace(/^-|-$/g, '').slice(0, 40);
+  spec.name = `live_search_${safeSlug || 'term'}`;
+  spec.description = `Live search "${term}"${parts.length ? ` with filters (${parts.join(', ')})` : ''} — revenue per vendor for the rare category over the last 7 days, restricted to matching products (live-search variant of rare_category_revenue_7d).`;
+  return spec;
+}
+
+module.exports = { specs, byName, makeLiveSearchSpec };

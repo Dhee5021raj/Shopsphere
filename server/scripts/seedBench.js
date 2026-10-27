@@ -27,6 +27,12 @@ function mulberry32(seed) {
   };
 }
 
+const ALLOWED_NUMERIC_KEYS = new Set([
+  'products', 'orders', 'items', 'vendors', 'categories',
+  'users', 'reviews', 'seed', 'batch'
+]);
+const NUMERIC_KEYS = ALLOWED_NUMERIC_KEYS;
+
 function parseArgs(argv) {
   const opts = {
     products: 200000, orders: 1000000, items: 4000000,
@@ -36,12 +42,37 @@ function parseArgs(argv) {
   for (const raw of argv.slice(2)) {
     if (raw === '--small') {
       Object.assign(opts, { products: 3000, orders: 12000, items: 48000, vendors: 20, categories: 12, users: 2000, reviews: 8000 });
+    } else if (raw === '--medium') {
+      Object.assign(opts, { products: 50000, orders: 100000, items: 400000, vendors: 100, categories: 30, users: 20000, reviews: 100000 });
     } else if (raw === '--drop') {
       opts.drop = true;
     } else {
-      const m = /^--([a-z]+)=(-?\d+)$/.exec(raw);
-      if (!m) throw new Error(`Unknown argument: ${raw}`);
-      opts[m[1]] = parseInt(m[2], 10);
+      const m = /^--([a-zA-Z0-9_-]+)=(.*)$/.exec(raw);
+      if (!m) {
+        throw new Error('Unknown argument: ' + raw);
+      }
+      const key = m[1];
+      const valStr = m[2];
+      if (!ALLOWED_NUMERIC_KEYS.has(key)) {
+        throw new Error('Unknown argument: ' + raw);
+      }
+      if (!/^-?\d+$/.test(valStr)) {
+        throw new Error('Value for --' + key + ' must be an integer, got: ' + valStr);
+      }
+      const val = parseInt(valStr, 10);
+      if (!Number.isSafeInteger(val)) {
+        throw new Error('Value for --' + key + ' must be an integer, got: ' + valStr);
+      }
+      if (key === 'seed') {
+        if (val < 0) {
+          throw new Error('Value for --seed must be a non-negative integer, got: ' + valStr);
+        }
+      } else {
+        if (val <= 0) {
+          throw new Error('Value for --' + key + ' must be a positive integer');
+        }
+      }
+      opts[key] = val;
     }
   }
   return opts;
@@ -115,19 +146,42 @@ async function main() {
   const productVendor = new Array(opts.products);
   const productCategory = new Array(opts.products);
   const productPrice = new Array(opts.products);
+  // Rich, demo-like names so live search terms ("laptop", "earbuds", …) can
+  // actually match rows in the bench DB — plain "Product 12" names would make
+  // every spliced search term filter to zero rows. Demo-ish names are not
+  // needed elsewhere: the fixed specs join on _id keys only.
+  const NAME_POOL = [
+    'AeroBlade Gaming Laptop Pro', 'SonicPulse Wireless Earbuds', 'Chronos Smartwatch Titanium',
+    'NovaMech Mechanical Keyboard', 'QuantumPixel 4K Monitor', 'HyperCool Liquid Cooler',
+    'StealthPad Drawing Tablet', 'OmniCam 4K Action Camera', 'Leather Field Jacket',
+    'Fleece Hoodie Organic', 'Merino Wool Blazer', 'Technical Cargo Joggers',
+    'Bamboo V-Neck Tee', 'Selvedge Denim Jeans', 'Carbon Runner Sneakers', 'Hiking Boots'
+  ];
   let pBatch = [];
   for (let i = 0; i < opts.products; i++) {
     const id = new mongoose.Types.ObjectId();
     const price = 100 + randInt(99900);
+    // Uniform rating in [1.0, 5.0] so minRating filter selectivity varies.
+    const rating = Math.round((1 + rng() * 4) * 10) / 10;
     productIds[i] = id;
     productVendor[i] = vendors[pick(vendorCum, rng())]._id;
     productCategory[i] = categories[pick(catCum, rng())]._id;
     productPrice[i] = price;
-    pBatch.push({ _id: id, name: `Product ${i}`, vendor_id: productVendor[i], category_id: productCategory[i], price, stock: randInt(500), created_at: new Date() });
+    pBatch.push({
+      _id: id,
+      name: `${NAME_POOL[i % NAME_POOL.length]} ${i}`,
+      vendor_id: productVendor[i],
+      category_id: productCategory[i],
+      price,
+      stock: randInt(500),
+      rating,
+      isFeatured: rng() < 0.05,
+      created_at: new Date()
+    });
     if (pBatch.length >= opts.batch) { await Product.insertMany(pBatch, { ordered: false }); pBatch = []; }
   }
   if (pBatch.length) await Product.insertMany(pBatch, { ordered: false });
-  console.log(`[seedBench] products: ${opts.products} (hot set = first ${hotCount(opts.products)})`);
+  console.log(`[seedBench] products: ${opts.products} (hot set = first ${hotCount(opts.products)}, searchable names)`);
 
   // ── orders + order_items ──────────────────────────────────────
   const now = Date.now();
@@ -237,4 +291,8 @@ async function insertBatched(Model, docs, batch) {
   }
 }
 
-main().catch((err) => { console.error('[seedBench] FAILED:', err); process.exit(1); });
+if (require.main === module) {
+  main().catch((err) => { console.error('[seedBench] FAILED:', err); process.exit(1); });
+}
+
+module.exports = { parseArgs, ALLOWED_NUMERIC_KEYS, NUMERIC_KEYS, main };

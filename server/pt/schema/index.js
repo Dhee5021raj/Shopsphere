@@ -35,6 +35,10 @@ const productsSchema = new Schema({
   category_id: { type: Schema.Types.ObjectId, ref: 'BenchCategory' },
   price: Number,
   stock: Number,
+  // Live-search splice support: the demo store filters products by average
+  // rating and featured flag, so the bench keeps comparable fields.
+  rating: Number,
+  isFeatured: Boolean,
   created_at: { type: Date, default: Date.now }
 }, { collection: 'products' });
 

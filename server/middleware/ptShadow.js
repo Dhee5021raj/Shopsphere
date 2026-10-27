@@ -18,6 +18,7 @@
 const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
+const Vendor = require('../models/Vendor');
 
 const SCRIPT = path.join(__dirname, '..', 'scripts', 'ptShadow.js');
 const LOG_DIR = path.join(__dirname, '..', 'logs');
@@ -46,7 +47,20 @@ function matchShadow(rawUrl) {
     if (r.requireQuery && !r.requireQuery.some((k) => params.get(k))) continue;
     best = r;
   }
-  return best ? { spec: best.spec, order: best.order || null } : null;
+  // A real search term and the applied filters are passed through so
+  // scripts/ptShadow.js can splice them into the benchmark spec (live-search
+  // variant) — category browses keep the fixed catalog spec.
+  return best ? {
+    spec: best.spec,
+    order: best.order || null,
+    search: params.get('search') || null,
+    minRating: params.get('minRating') || null,
+    minPrice: params.get('minPrice') || null,
+    maxPrice: params.get('maxPrice') || null,
+    inStock: params.get('inStock') || null,
+    featured: params.get('featured') || null,
+    vendor: params.get('vendor') || null
+  } : null;
 }
 
 function shadowBusy() {
@@ -57,7 +71,7 @@ function shadowBusy() {
   }
 }
 
-function scheduleShadow(match, trigger) {
+async function scheduleShadow(match, trigger) {
   if (process.env.PT_SHADOW !== '1' || !match) return null;
   // Single-flight: never let repeated searches pile up heavy benchmarks.
   if (shadowBusy()) return null;
@@ -67,8 +81,25 @@ function scheduleShadow(match, trigger) {
   } catch (_) {
     return null;
   }
+  // Map the demo vendor id the client filters by to a store NAME — the bench
+  // DB shares no supplier ids with the demo DB, so the child script can only
+  // emulate the vendor scope from a name (it hashes it to a bench `Vendor N`).
+  let vendorName = null;
+  if (match.vendor) {
+    try {
+      const v = await Vendor.findById(match.vendor).select('storeName').lean();
+      vendorName = v ? (v.storeName || v.name || null) : null;
+    } catch (_) { vendorName = null; }
+  }
   const args = [SCRIPT, `--spec=${match.spec}`, `--trigger=${trigger}`];
   if (match.order) args.push(`--order=${match.order}`);
+  if (match.search) args.push(`--search=${match.search}`);
+  if (match.minRating) args.push(`--minRating=${match.minRating}`);
+  if (match.minPrice) args.push(`--minPrice=${match.minPrice}`);
+  if (match.maxPrice) args.push(`--maxPrice=${match.maxPrice}`);
+  if (match.inStock) args.push(`--inStock=${match.inStock}`);
+  if (match.featured) args.push(`--featured=${match.featured}`);
+  if (vendorName) args.push(`--vendorName=${vendorName}`);
   let child;
   try {
     child = spawn(process.execPath, args, {
@@ -91,9 +122,12 @@ function ptShadow(req, res, next) {
   res.on('finish', () => {
     try {
       const match = matchShadow(req.originalUrl || req.url);
-      if (match)      // Keep the full URL (incl. query) so the log shows WHAT the user did —
-      // e.g. `/api/products?search=laptop` — not just that something fired.
-      scheduleShadow(match, (req.originalUrl || req.url));
+      if (match) {
+        // Keep the full URL (incl. query) so the log shows WHAT the user did —
+        // e.g. `/api/products?search=laptop` — not just that something fired.
+        Promise.resolve(scheduleShadow(match, (req.originalUrl || req.url)))
+          .catch((e) => console.error('[pt-shadow] schedule failed:', e.message));
+      }
     } catch (e) {
       console.error('[pt-shadow] schedule failed:', e.message);
     }

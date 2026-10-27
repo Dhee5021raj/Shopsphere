@@ -8,9 +8,9 @@
  * opens its own bench connection, runs reduced vs naive on the spec's default
  * join order, and appends a `kind: 'shadow'` record to the JSONL log.
  *
- * The REDUCED (fast) side runs FIRST, and progress is written to
+ * The OPTIMIZED (fast) side runs FIRST, and progress is written to
  * `.pt-shadow-status.json` after every phase so the live UI can show
- * "reduced finished" separately while the naive side is still running.
+ * "optimized finished" separately while the standard side is still running.
  *
  * Usage: node scripts/ptShadow.js --spec=<name> [--runs=N] [--trigger=/api/...]
  *
@@ -20,8 +20,11 @@
 const fs = require('fs');
 const path = require('path');
 const { connectBench, disconnectBench, benchUri } = require('../pt/benchDb');
-const { byName } = require('../pt/specs');
-const { runNaive, runReduced, resultsEqual, checksum, fullCollectionOf } = require('../pt/execute');
+const { byName, makeLiveSearchSpec } = require('../pt/specs');
+const { Vendor } = require('../pt/schema');
+const { runNaive, runReduced, resultsEqual, checksum, fullCollectionOf, validJoinOrders } = require('../pt/execute');
+const { computeSizes } = require('../pt/transfer');
+const { greedyBestOrder } = require('../pt/bestOrder');
 
 const LOG_DIR = path.join(__dirname, '..', 'logs');
 const LOG_FILE = process.env.PT_LOG || path.join(LOG_DIR, 'pt-log.jsonl');
@@ -47,11 +50,24 @@ async function main() {
   const specName = arg('spec', null);
   const trigger = arg('trigger', null);
   const runs = Math.max(1, Number(arg('runs', process.env.PT_SHADOW_RUNS || 2)));
+  const liveTerm = (arg('search', '') || '').trim();
+  const num = (v) => (v == null || v === '' || Number.isNaN(Number(v)) ? null : Number(v));
+  const liveFilters = {
+    minRating: num(arg('minRating', null)),
+    minPrice: num(arg('minPrice', null)),
+    maxPrice: num(arg('maxPrice', null)),
+    inStock: (arg('inStock', null) || null) === 'true' || null,
+    featured: (arg('featured', null) || null) === 'true' || null,
+    vendorName: (arg('vendorName', '') || '').trim() || null
+  };
   if (!specName || !byName[specName]) {
     console.error(`[pt-shadow] unknown or missing spec '${specName}'`);
     process.exit(1);
   }
-  const spec = byName[specName];
+  // Live-search variant: when a real search term was passed through, splice it
+  // into the product relation so BOTH sides measure the actual user query
+  // instead of the fixed catalog spec.
+  const spec = liveTerm ? makeLiveSearchSpec({ search: liveTerm, filters: liveFilters }) : byName[specName];
   // Naive/reduced join order. Defaults to the spec's declared relation order,
   // but the caller may pin an order (e.g. a bad one) so the reduction win is
   // visible in the live app.
@@ -67,7 +83,6 @@ async function main() {
     ? `timed on the PINNED join order ${orderPretty} (a deliberately bad left-deep order that starves the naive side)`
     : `timed on the spec's declared join order ${orderPretty}`;
   const runDescription = `${spec.description} — ${orderNote}.`;
-
   fs.mkdirSync(LOG_DIR, { recursive: true });
 
   const runStartedAt = new Date();
@@ -77,6 +92,8 @@ async function main() {
   const phaseState = {
     startedAt: runStartedAt.toISOString(),
     updatedAt: runStartedAt.toISOString(),
+    standard: { phase: 'idle', startedAt: null, finishedAt: null, ms: null },
+    optimized: { phase: 'idle', startedAt: null, finishedAt: null, ms: null },
     naive: { phase: 'idle', startedAt: null, finishedAt: null, ms: null },
     reduced: { phase: 'idle', startedAt: null, finishedAt: null, ms: null }
   };
@@ -86,12 +103,28 @@ async function main() {
       fs.writeFileSync(STATUS_FILE, JSON.stringify({ pid: process.pid, ...phaseState }));
     } catch (_) { /* status is best-effort */ }
   };
+  const PHASE_MAP = {
+    optimized: ['optimized', 'reduced'],
+    reduced: ['optimized', 'reduced'],
+    standard: ['standard', 'naive'],
+    naive: ['standard', 'naive']
+  };
   const beginPhase = (name) => {
-    phaseState[name] = { phase: 'running', startedAt: new Date().toISOString(), finishedAt: null, ms: null };
+    const keys = PHASE_MAP[name] || [name];
+    const nowIso = new Date().toISOString();
+    for (const k of keys) {
+      phaseState[k] = { phase: 'running', startedAt: nowIso, finishedAt: null, ms: null };
+    }
     writeStatus();
   };
   const endPhase = (name, ms) => {
-    phaseState[name] = { phase: 'done', startedAt: phaseState[name].startedAt, finishedAt: new Date().toISOString(), ms: Math.round(ms) };
+    const keys = PHASE_MAP[name] || [name];
+    const nowIso = new Date().toISOString();
+    const roundedMs = ms != null ? Math.round(ms) : null;
+    for (const k of keys) {
+      const prevStarted = phaseState[k] ? phaseState[k].startedAt : nowIso;
+      phaseState[k] = { phase: 'done', startedAt: prevStarted, finishedAt: nowIso, ms: roundedMs };
+    }
     writeStatus();
   };
 
@@ -102,10 +135,25 @@ async function main() {
     // a stale lock -> UI showed "MEASUREMENT RUNNING" for up to 15 minutes.
     await connectBench();
 
-    // ── REDUCED first ────────────────────────────────────────────
+    // The demo vendor filter cannot map directly (the two DBs share no
+    // supplier ids), so it is deterministically EMULATED: hash the demo store
+    // name to a bench `Vendor N`. One scoped vendor, same request shape.
+    // MUST run after connectBench() — countDocuments needs the connection.
+    if (liveFilters.vendorName) {
+      let hash = 5381;
+      for (const c of liveFilters.vendorName) hash = ((hash << 5) + hash + c.charCodeAt(0)) >>> 0;
+      const vendorCount = await Vendor.countDocuments();
+      const idx = vendorCount > 0 ? hash % vendorCount : 0;
+      const benchName = `Vendor ${idx}`;
+      spec.relations.find((r) => r.alias === 'v').localFilter = { name: benchName };
+      spec.description += ` Vendor scope emulated as bench ${benchName}.`;
+      runDescription += ` Vendor scope emulated as bench ${benchName}.`;
+    }
+
+    // ── OPTIMIZED (mongo-pt) first ────────────────────────────────
     // The fast side finishes in seconds; the UI shows it as "done" while the
-    // naive side keeps grinding.
-    beginPhase('reduced');
+    // standard side keeps grinding.
+    beginPhase('optimized');
     const red = await runReduced(spec, order, { now: runStartedAt });
     const reducedTimes = [];
     // Transfer/materialization are collected from the SAME timed runs the total
@@ -121,10 +169,10 @@ async function main() {
       matTimes.push(r.materializationMs);
       reducedResult = r.result;
     }
-    endPhase('reduced', med(reducedTimes));
+    endPhase('optimized', med(reducedTimes));
 
-    // ── NAIVE second ─────────────────────────────────────────────
-    beginPhase('naive');
+    // ── STANDARD MongoDB second ───────────────────────────────────
+    beginPhase('standard');
     await runNaive(spec, order, { now: runStartedAt }); // warm-up
     const naiveTimes = [];
     let naiveResult;
@@ -133,7 +181,7 @@ async function main() {
       naiveTimes.push(ms);
       naiveResult = r.result;
     }
-    endPhase('naive', med(naiveTimes));
+    endPhase('standard', med(naiveTimes));
 
     const naiveMs = med(naiveTimes);
     const reducedMs = med(reducedTimes);
@@ -145,14 +193,93 @@ async function main() {
     const overheadPct = totalMs > 0 ? +(((transferMs + matMs) / totalMs) * 100).toFixed(1) : null;
     const eq = resultsEqual(naiveResult, reducedResult);
 
+    // ── SECOND TIMING LINE: dynamic best order (Step 7c) ─────────
+    // The pinned worst case above stays the headline demo. This extra line
+    // times ONE dynamically picked order — greedy walk from the smallest
+    // relation, using live sizes — on BOTH sides, so it is a fair comparison,
+    // and shows what a filter/data-aware order buys the naive side. Capped at
+    // 120 s per side; a timeout is an honest censored number (equality n/v).
+    let best = null;
+    try {
+      const sizes = await computeSizes(spec, runStartedAt);
+      const bestOrder = greedyBestOrder(spec, sizes);
+      const bestOrderStr = bestOrder && bestOrder.join('>');
+      const valid = new Set(validJoinOrders(spec).map((o) => o.join('>')));
+      if (bestOrderStr && valid.has(bestOrderStr) && bestOrderStr !== order.join('>')) {
+        const nb = await timeIt(() => runNaive(spec, bestOrder, { now: runStartedAt, maxTimeMs: 120000 }));
+        const rb = await timeIt(() => runReduced(spec, bestOrder, { now: runStartedAt, maxTimeMs: 120000 }));
+        const eqB = resultsEqual(nb.r.result, rb.r.result);
+        const eqCross = resultsEqual(naiveResult, nb.r.result);
+        best = {
+          order: bestOrderStr,
+          standard_ms: +nb.ms.toFixed(1),
+          optimized_ms: +rb.ms.toFixed(1),
+          naive_ms: +nb.ms.toFixed(1),
+          reduced_ms: +rb.ms.toFixed(1),
+          transfer_ms: rb.r.transferMs,
+          materialization_ms: rb.r.materializationMs,
+          speedup: rb.ms > 0 ? +(nb.ms / rb.ms).toFixed(2) : null,
+          equal: eqB.equal,
+          cross_equal: eqCross.equal,
+          result_rows: eqB.rows != null ? eqB.rows : null
+        };
+      } else if (bestOrderStr && bestOrderStr === order.join('>')) {
+        best = { order: bestOrderStr, note: 'greedy pick equals the pinned order — no second line needed' };
+      }
+    } catch (e) {
+      best = { error: e.message };
+    }
+
+    // ── THIRD TIMING LINE: the WORST-CASE query (Step 7b) ─────────
+    // A live-search splice puts a selective filter on the products relation,
+    // and products sits FIRST in the pinned order — so the naive side starts
+    // from a tiny set and the pinned "bad" order stops being bad. Both sides
+    // become cheap and the reduced side's fixed transfer/materialization
+    // overhead dominates, collapsing the speedup to ~0.1x. This extra line
+    // re-times the ORIGINAL worst case — the fixed catalog spec (no search
+    // filter) on the SAME pinned bad order — so the headline reduction win
+    // stays visible next to every live-search row. Skipped for category
+    // browses, which already measure the fixed spec.
+    let worstCase = null;
+    if (liveTerm) {
+      try {
+        const baseSpec = byName[specName];
+        await runNaive(baseSpec, order, { now: runStartedAt }); // warm-up (this side is slow)
+        const wn = await timeIt(() => runNaive(baseSpec, order, { now: runStartedAt }));
+        const wr = await timeIt(() => runReduced(baseSpec, order, { now: runStartedAt }));
+        const eqW = resultsEqual(wn.r.result, wr.r.result);
+        worstCase = {
+          spec: baseSpec.name,
+          order: order.join('>'),
+          standard_ms: +wn.ms.toFixed(1),
+          optimized_ms: +wr.ms.toFixed(1),
+          naive_ms: +wn.ms.toFixed(1),
+          reduced_ms: +wr.ms.toFixed(1),
+          transfer_ms: wr.r.transferMs,
+          materialization_ms: wr.r.materializationMs,
+          speedup: wr.ms > 0 ? +(wn.ms / wr.ms).toFixed(2) : null,
+          equal: eqW.equal,
+          result_rows: eqW.rows != null ? eqW.rows : null
+        };
+      } catch (e) {
+        worstCase = { error: e.message };
+      }
+    }
+
     const rec = {
       ts: new Date().toISOString(),
       kind: 'shadow',
       trigger,
-      spec: specName,
+      spec: spec.name,
+      search_term: liveTerm || null,
+      filters: liveFilters,
+      best,
+      worst_case: worstCase,
       description: runDescription,
       order: order.join('>'),
       runs,
+      standard_ms: +naiveMs.toFixed(1),
+      optimized_ms: +reducedMs.toFixed(1),
       naive_ms: +naiveMs.toFixed(1),
       reduced_ms: +reducedMs.toFixed(1),
       transfer_ms: transferMs,
@@ -167,7 +294,8 @@ async function main() {
       db: benchUri()
     };
     fs.appendFileSync(LOG_FILE, JSON.stringify(rec) + '\n');
-    console.log(`[pt-shadow] ${specName} naive=${naiveMs}ms reduced=${totalMs}ms speedup=${rec.speedup} equal=${eq.equal}`);
+    const worstNote = worstCase && worstCase.speedup != null ? ` worstCaseSpeedup=${worstCase.speedup}` : '';
+    console.log(`[pt-shadow] ${spec.name} standard=${naiveMs}ms optimized=${totalMs}ms speedup=${rec.speedup} equal=${eq.equal}${worstNote}${liveTerm ? ` (live "${liveTerm}")` : ''}`);
   } finally {
     // Release the single-flight lock LAST and unconditionally — if disconnectBench
     // throws, the lock must still be removed or every future trigger gets skipped.
