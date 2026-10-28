@@ -216,7 +216,12 @@ describe('Challenger M4-1: Adversarial Coverage Hardening', () => {
             standard: { phase: 'done', startedAt: nowIso, finishedAt: nowIso, ms: 3200 },
             optimized: { phase: 'done', startedAt: nowIso, finishedAt: nowIso, ms: 450 }
           },
-          expectedRunning: true
+          // Updated: a child whose BOTH phases are done is in post-run
+          // housekeeping (best/worst-case timing lines, record write), not
+          // still measuring. Reporting Running here kept the UI's elapsed
+          // timer ticking for minutes after both comparisons completed on
+          // large datasets — the exact bug this contract previously codified.
+          expectedRunning: false
         },
         {
           name: 'Phase 4: Finished and cleaned up',

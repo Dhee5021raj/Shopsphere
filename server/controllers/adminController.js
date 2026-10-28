@@ -194,8 +194,39 @@ const getPtStatus = async (req, res) => {
     } : null;
 
     // 1) Preferred source: the live status file written by scripts/ptShadow.js.
+    let rawStatus = null;
+    let statusUnreadable = false; // exists but empty/torn JSON (child mid-write or crashed write)
     try {
-      const rec = JSON.parse(fs.readFileSync(statusFile, 'utf8'));
+      rawStatus = fs.readFileSync(statusFile, 'utf8');
+    } catch (e) {
+      if (e && e.code !== 'ENOENT') statusUnreadable = true; // exists but unreadable
+    }
+    let rec = null;
+    if (rawStatus !== null) {
+      try { rec = JSON.parse(rawStatus); } catch (_) { statusUnreadable = true; }
+    }
+
+    if (statusUnreadable) {
+      // Do NOT fall through to the lock-file fallback here. A live child keeps
+      // a fresh lock for its whole run (including post-run housekeeping), so a
+      // torn/partial status read racing the child's writeFileSync would flip
+      // the response to "running: true" from the lock — restarting the UI's
+      // elapsed timer even though both comparisons were already done. One idle
+      // poll until the file is readable again is harmless; a ticking timer is
+      // the bug. (1s max: the child writes ~300 bytes per phase transition.)
+      return res.json({
+        running: false,
+        startedAt: null,
+        standard: null,
+        optimized: null,
+        naive: null,
+        reduced: null,
+        staleAfterMin: STALE_MS / 60000,
+        typicalRunSeconds: 60
+      });
+    }
+
+    if (rec) {
       const updatedAtMs = new Date(rec.updatedAt || rec.startedAt).getTime();
       const fresh = Date.now() - updatedAtMs < STALE_MS && isAlive(rec.pid);
 
@@ -222,24 +253,49 @@ const getPtStatus = async (req, res) => {
           }
         }
       }
-      const anyPhase = fresh && Object.values(phases).some((p) => p && (p.running || p.done));
+      // A run is only "running" while its phases are NOT all finished. The
+      // previous check (`p.running || p.done`) also counted DONE phases, so
+      // between the child's last `endPhase` and its file cleanup (which on the
+      // full dataset includes several minutes of extra timing lines) the UI
+      // kept "MEASUREMENT RUNNING · Ns elapsed" ticking even though both
+      // comparisons had already completed.
+      const allDone = [std, opt].every((p) => !p || p.done);
+      const isRunning = fresh && !allDone;
       return res.json({
-        running: anyPhase,
+        running: isRunning,
         startedAt: rec.startedAt || null,
         ...phases,
         staleAfterMin: STALE_MS / 60000,
         typicalRunSeconds: 60
       });
-    } catch (_) { /* no/unreadable status file -> fall back to the legacy lock */ }
+    }
+    // (fall through when there is no status file at all)
 
     // 2) Legacy fallback (older shadow child without a status file): the lock.
+    // The lock may carry the child's pid (written by the middleware after
+    // spawn): when that pid is dead — a child killed before its cleanup — the
+    // run must report idle instead of leaving "running" (and the UI's elapsed
+    // timer) ticking for the full STALE_MS window.
     let running = false;
     let startedAt = null;
     try {
-      const mtimeMs = fs.statSync(path.join(logDir, '.pt-shadow.lock')).mtimeMs;
-      if (Date.now() - mtimeMs < STALE_MS) {
+      const lockPath = path.join(logDir, '.pt-shadow.lock');
+      const stat = fs.statSync(lockPath);
+      const fresh = Date.now() - stat.mtimeMs < STALE_MS;
+      let lockPid = null;
+      let lockT = null;
+      try {
+        const raw = fs.readFileSync(lockPath, 'utf8').trim();
+        if (raw.startsWith('{')) {
+          const j = JSON.parse(raw);
+          if (j && j.pid != null) lockPid = Number(j.pid);
+          if (j && j.t != null && !Number.isNaN(new Date(j.t).getTime())) lockT = j.t;
+        }
+      } catch (_) { /* plain-text timestamp lock (legacy shape) */ }
+      const pidDead = lockPid != null && !isAlive(lockPid);
+      if (fresh && !pidDead) {
         running = true;
-        startedAt = new Date(mtimeMs).toISOString();
+        startedAt = lockT != null ? new Date(lockT).toISOString() : new Date(stat.mtimeMs).toISOString();
       }
     } catch (_) { /* no lock file → idle */ }
     res.json({

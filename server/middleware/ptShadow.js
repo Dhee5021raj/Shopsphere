@@ -107,6 +107,11 @@ async function scheduleShadow(match, trigger) {
       stdio: 'ignore',
       env: process.env
     });
+    // Record the child's pid in the lock so GET /api/admin/pt-status can
+    // verify its liveness: a child killed before its own cleanup previously
+    // left the fresh lock reporting "running" — and the UI's elapsed timer
+    // ticking — until LOCK_STALE_MS (15 min) expired.
+    try { fs.writeFileSync(LOCK_FILE, JSON.stringify({ t: Date.now(), pid: child.pid })); } catch (_) { /* claim already holds */ }
   } catch (e) {
     // Failed to even start the child -> release the single-flight lock NOW or
     // every future trigger is skipped for up to LOCK_STALE_MS.

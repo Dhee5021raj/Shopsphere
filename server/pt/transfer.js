@@ -8,6 +8,13 @@
  *     else apply `targetField IN incoming` as a constraint on target
  *     record keysIn, keysOut (per outgoing edge), docs examined, time
  *
+ * `keysOut` (per outgoing edge of the target) is pure diagnostics — nothing
+ * downstream reads it — and each outgoing distinct-set aggregation is another
+ * full $group scan over whatever relation the target happens to be (order
+ * items alone is 4M documents here). Running it inside the TIMED pass made
+ * the transfer ~2x slower than the algorithm actually needs on this dataset.
+ * Like docsExamined it is now OFF by default; set PT_KEYS_OUT=1 to re-enable.
+ *
  * Using exact sets makes each step a true semi-join, which is what gives the
  * paper's full-reduction / robustness guarantee. The cap is the honest
  * trade-off documented in docs/pt-design.md.
@@ -46,7 +53,16 @@ function outgoingFields(graph, alias) {
   return fields;
 }
 
+function keysOutEnabled() {
+  return process.env.PT_KEYS_OUT === '1';
+}
+
 async function docsExamined(Model, match) {
+  // explain('executionStats') EXECUTES the matched query to collect its stats,
+  // so on large collections it costs a full extra scan per transfer step —
+  // instrumentation inflating the measured transfer time on the very numbers
+  // the benchmark reports. Off by default; set PT_DOCS_EXAMINED=1 to re-enable.
+  if (process.env.PT_DOCS_EXAMINED !== '1') return null;
   try {
     const ex = await Model.find(match).explain('executionStats');
     const es = ex && (ex.executionStats || (ex[0] && ex[0].executionStats));
@@ -84,30 +100,25 @@ async function runTransfer(spec, options = {}) {
     return n;
   }
 
-  // Returns { size, set }. `set` is null when the distinct set exceeds the cap
-  // (we count first so we never materialise a >16MB distinct result).
+  // Returns { size, set }. `set` is null when the distinct set exceeds the cap.
+  // The size is derived from the SAME values pass, so the aggregation runs once
+  // per (alias, field) instead of twice — on large relations the removed second
+  // full $group scan previously dominated the transfer time.
   async function getSet(alias, field) {
     let perAlias = setCache.get(alias);
     if (!perAlias) { perAlias = new Map(); setCache.set(alias, perAlias); }
     if (perAlias.has(field)) return perAlias.get(field);
     const Model = modelForCollection(spec.relations.find((r) => r.alias === alias).collection);
     const match = { $and: [localFilters.get(alias), constraintsToMatch(constraints.get(alias))] };
-    const counted = await Model.aggregate(
-      [{ $match: match }, { $group: { _id: `$${field}` } }, { $count: 'n' }],
+    const docs = await Model.aggregate(
+      [{ $match: match }, { $group: { _id: `$${field}` } }, { $project: { _id: 0, v: '$_id' } }],
       { allowDiskUse: true }
     );
-    const size = counted.length ? counted[0].n : 0;
-    let entry;
-    if (size > cap) {
-      entry = { size, values: null, set: null };
-    } else {
-      const docs = await Model.aggregate(
-        [{ $match: match }, { $group: { _id: `$${field}` } }, { $project: { _id: 0, v: '$_id' } }],
-        { allowDiskUse: true }
-      );
-      const values = docs.map((d) => d.v);
-      entry = { size, values, set: makeSet(values, setKind) };
-    }
+    const values = docs.map((d) => d.v);
+    const size = values.length;
+    const entry = size > cap
+      ? { size, values: null, set: null }
+      : { size, values, set: makeSet(values, setKind) };
     perAlias.set(field, entry);
     return entry;
   }
@@ -156,10 +167,14 @@ async function runTransfer(spec, options = {}) {
     const tMatch = { $and: [localFilters.get(target), constraintsToMatch(constraints.get(target))] };
     const examined = await docsExamined(tModel, tMatch);
 
-    const keysOut = {};
-    for (const of of outgoingFields(schedule.graph, target)) {
-      const e = await getSet(target, of.field);
-      keysOut[`${target}.${of.field}`] = e.size;
+    // Diagnostics only (see header) — outside the algorithm's critical path.
+    let keysOut = null;
+    if (keysOutEnabled()) {
+      keysOut = {};
+      for (const of of outgoingFields(schedule.graph, target)) {
+        const e = await getSet(target, of.field);
+        keysOut[`${target}.${of.field}`] = e.size;
+      }
     }
 
     stats.push({

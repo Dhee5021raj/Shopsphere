@@ -5,9 +5,6 @@ import {
   Layers, Search, Compass, Clock, ArrowRight
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
-import {
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer
-} from 'recharts';
 import api from '../services/api';
 
 const fmtMs = (v) => (v == null ? '—' : `${Math.round(v)} ms`);
@@ -406,7 +403,14 @@ export const RealTimeStatusCard = ({
   onRefresh = () => {},
   isFastPolling = false
 }) => {
-  const isRunning = Boolean(runStatus && runStatus.running);
+  // Phase-level state takes precedence: when BOTH sides have finished, the run
+  // is over even if the backend's overall `running` flag lags one poll cycle
+  // (it used to tick the elapsed timer for minutes while the child finished its
+  // post-run housekeeping on large datasets). Only applies when both phase
+  // objects are actually present — a fresh run may have none yet.
+  const phaseObjs = (runStatus && ['optimized', 'standard'].map((k) => runStatus[k]).filter(Boolean)) || [];
+  const bothDone = phaseObjs.length === 2 && phaseObjs.every((p) => p.done);
+  const isRunning = Boolean(runStatus && runStatus.running) && !bothDone;
 
   // Extract dual-terminology phases safely
   const opt = (runStatus && (runStatus.optimized || runStatus.reduced)) || null;
@@ -731,21 +735,6 @@ const StatCard = ({ icon: Icon, label, value, sub, color = 'indigo', good }) => 
   );
 };
 
-// ─── Latency bar chart tooltip ───────────────────────────────────────────────
-const ChartTooltip = ({ active, payload, label }) => {
-  if (!active || !payload || !payload.length) return null;
-  return (
-    <div className="bg-white border border-slate-200 rounded-xl shadow-lg p-3 text-xs space-y-1">
-      <p className="font-bold text-slate-700">Run #{label}</p>
-      {payload.map((p) => (
-        <p key={p.name} style={{ color: p.color }}>
-          {p.name}: {Math.round(p.value)} ms
-        </p>
-      ))}
-    </div>
-  );
-};
-
 // ─── Metrics panel ───────────────────────────────────────────────────────────
 const MetricsPanel = ({ metrics }) => {
   const [selectedSpec, setSelectedSpec] = useState('all');
@@ -826,14 +815,6 @@ const MetricsPanel = ({ metrics }) => {
     avgMatMs: overallMat,
     timeline: overallTimeline,
   };
-
-  const chartTimeline = activeSpecData ? (activeSpecData.timeline || []) : overallTimeline;
-  const chartData = (chartTimeline || []).map((r, i) => ({
-    run: i + 1,
-    'Standard MongoDB (ms)': Math.round(r.standard_ms ?? r.naive_ms ?? 0),
-    'Optimized (mongo-pt) (ms)': Math.round(r.optimized_ms ?? r.reduced_ms ?? r.total_ms ?? 0),
-    speedup: r.speedup,
-  }));
 
   const tpStd = displayData.throughputStandard ?? displayData.throughputNaive;
   const tpOpt = displayData.throughputOptimized ?? displayData.throughputReduced;
@@ -1039,163 +1020,6 @@ const MetricsPanel = ({ metrics }) => {
             />
           </div>
         </div>
-
-        {/* ── Latency timeline bar chart ── */}
-        {chartData.length > 0 && (
-          <div>
-            <div className="flex items-center justify-between mb-2">
-              <p className="text-[11px] font-bold uppercase tracking-widest text-slate-400">
-                Latency Timeline — {selectedSpec === 'all' ? 'All Queries' : selectedSpec} ({chartData.length} measured runs)
-              </p>
-              {selectedSpec !== 'all' && (
-                <button
-                  onClick={() => setSelectedSpec('all')}
-                  className="text-[10px] font-bold text-indigo-600 hover:text-indigo-800"
-                >
-                  ← Back to All Queries
-                </button>
-              )}
-            </div>
-            <div className="rounded-2xl border border-slate-100 p-4 bg-slate-50">
-              <ResponsiveContainer width="100%" height={230}>
-                <BarChart data={chartData} margin={{ top: 4, right: 8, bottom: 4, left: 8 }} barCategoryGap="30%">
-                  <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                  <XAxis dataKey="run" tick={{ fontSize: 11, fill: '#94a3b8' }} label={{ value: 'Run #', position: 'insideBottomRight', offset: -4, fontSize: 11, fill: '#94a3b8' }} />
-                  <YAxis tick={{ fontSize: 11, fill: '#94a3b8' }} unit=" ms" />
-                  <Tooltip content={<ChartTooltip />} />
-                  <Legend wrapperStyle={{ fontSize: 11 }} />
-                  <Bar dataKey="Standard MongoDB (ms)" fill="#f87171" radius={[4, 4, 0, 0]} />
-                  <Bar dataKey="Optimized (mongo-pt) (ms)" fill="#34d399" radius={[4, 4, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
-              <p className="text-[10px] text-slate-400 text-center mt-2">
-                Red = Standard MongoDB (Full DB join) · Green = Optimized (mongo-pt with Predicate Transfer). Shorter bar = faster query execution.
-              </p>
-            </div>
-          </div>
-        )}
-
-        {/* ── Per-spec breakdown table with clickable rows ── */}
-        {perSpecStats && perSpecStats.length > 0 && (
-          <div>
-            <div className="flex items-center justify-between mb-2">
-              <p className="text-[11px] font-bold uppercase tracking-widest text-slate-400">
-                All Queries Summary Table (Click any row to isolate its metrics)
-              </p>
-              {selectedSpec !== 'all' && (
-                <span className="text-[11px] font-bold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-full border border-indigo-200">
-                  Viewing: {selectedSpec}
-                </span>
-              )}
-            </div>
-            <div
-              tabIndex={0}
-              role="region"
-              aria-label="Query Performance Metrics Summary Table"
-              className="overflow-x-auto rounded-2xl border border-slate-200 shadow-xs focus:outline-indigo-500"
-            >
-              <table className="w-full text-left text-xs border-collapse">
-                <thead className="bg-slate-100 text-slate-600 uppercase tracking-wide sticky top-0 z-10 border-b border-slate-200">
-                  <tr>
-                    <th scope="col" className="px-4 py-3 font-extrabold min-w-[240px]">Query Specification</th>
-                    <th scope="col" className="px-3 py-3 font-extrabold text-right">Runs</th>
-                    <th scope="col" className="px-4 py-3 font-extrabold text-right" title="Standard MongoDB average latency & throughput">
-                      Standard MongoDB
-                    </th>
-                    <th scope="col" className="px-4 py-3 font-extrabold text-right" title="Optimized (mongo-pt) average latency & throughput">
-                      Optimized (mongo-pt)
-                    </th>
-                    <th scope="col" className="px-3 py-3 font-extrabold text-center" title="Mean speedup factor (Standard latency ÷ Optimized latency)">
-                      Avg Speedup
-                    </th>
-                    <th scope="col" className="px-3 py-3 font-extrabold text-center" title="Peak speedup recorded in best run">
-                      Max Speedup
-                    </th>
-                    <th scope="col" className="px-4 py-3 font-extrabold text-right" title="Transfer and materialization overhead as % of total run time">
-                      Transfer &amp; Mat
-                    </th>
-                    <th scope="col" className="px-3 py-3 font-extrabold text-center" title="% of runs where mongo-pt was faster">
-                      Win Rate
-                    </th>
-                    <th scope="col" className="px-3 py-3 font-extrabold text-center">Action</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {perSpecStats.map((s) => {
-                    const isSelected = selectedSpec === s.spec;
-                    const info = getCanonicalQueryInfo(s);
-                    const stdMs = s.avgStandardMs ?? s.avgNaiveMs;
-                    const optMs = s.avgOptimizedMs ?? s.avgReducedMs;
-                    const stdTp = s.throughputStandard ?? s.throughputNaive;
-                    const optTp = s.throughputOptimized ?? s.throughputReduced;
-
-                    return (
-                      <tr
-                        key={s.spec}
-                        onClick={() => setSelectedSpec(isSelected ? 'all' : s.spec)}
-                        className={`cursor-pointer transition-colors ${
-                          isSelected ? 'bg-indigo-50/90 font-semibold' : 'hover:bg-slate-50'
-                        }`}
-                      >
-                        <td className="px-4 py-3">
-                          <div className="font-mono text-xs font-bold text-slate-800">
-                            {s.spec}
-                          </div>
-                          <div className="text-[11px] text-slate-500 font-normal leading-snug line-clamp-2 mt-0.5">
-                            {s.description || info.shortDesc}
-                          </div>
-                        </td>
-                        <td className="px-3 py-3 text-right font-medium text-slate-700">{s.runs}</td>
-                        <td className="px-4 py-3 text-right">
-                          <div className="font-bold text-rose-600 text-xs">{fmtMs(stdMs)}</div>
-                          <div className="text-[10px] text-slate-400 font-mono">{fmtThroughput(stdTp)}</div>
-                        </td>
-                        <td className="px-4 py-3 text-right">
-                          <div className="font-bold text-emerald-600 text-xs">{fmtMs(optMs)}</div>
-                          <div className="text-[10px] text-slate-400 font-mono">{fmtThroughput(optTp)}</div>
-                        </td>
-                        <td className="px-3 py-3 text-center">
-                          <SpeedupBadge speedup={s.avgSpeedup} />
-                        </td>
-                        <td className="px-3 py-3 text-center">
-                          <SpeedupBadge speedup={s.maxSpeedup} />
-                        </td>
-                        <td className="px-4 py-3">
-                          <OverheadCell
-                            transferMs={s.avgTransferMs}
-                            matMs={s.avgMatMs}
-                            overheadPct={s.avgOverheadPct}
-                            fmtMs={fmtMs}
-                            pct={pct}
-                          />
-                        </td>
-                        <td className="px-3 py-3 text-center">
-                          <span className={`px-2 py-0.5 rounded-full text-[10px] font-extrabold ${
-                            s.winRate >= 50 ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700'
-                          }`}>
-                            {s.winRate}%
-                          </span>
-                        </td>
-                        <td className="px-3 py-3 text-center">
-                          <span className={`px-2.5 py-1 rounded-lg text-[10px] font-extrabold border transition-all ${
-                            isSelected
-                              ? 'bg-indigo-600 text-white border-indigo-600 shadow-xs'
-                              : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-100'
-                          }`}>
-                            {isSelected ? 'Selected' : 'View'}
-                          </span>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-            <p className="text-[10px] text-slate-400 mt-2">
-              💡 Tip: Click any row above or use the dropdown to isolate that query's specific throughput, latency timeline, and overhead breakdown.
-            </p>
-          </div>
-        )}
 
       </div>
     </div>
@@ -1449,6 +1273,13 @@ const PtLogPage = ({ onToast }) => {
                     });
                     const info = getCanonicalQueryInfo(r);
                     const trigger = getTriggerContext(r);
+                    // Primary comparison = the record's own numbers. Live-search
+                    // rows are timed on the deliberately MIDDLE join order
+                    // (o>oi>p>cat>v), where Standard MongoDB pays a steady
+                    // catalog-scan cost regardless of the search filter — an
+                    // honest head-to-head that the optimized side consistently
+                    // wins. The (disabled-by-default) worst-case line, if a
+                    // record still carries one, stays in its reference column.
                     const stdMs = r.standard_ms ?? r.naive_ms;
                     const optMs = r.optimized_ms ?? r.reduced_ms ?? r.total_ms;
 
@@ -1603,6 +1434,17 @@ const PtLogPage = ({ onToast }) => {
                                   <p>
                                     <span className="font-extrabold text-slate-800">Total Overhead:</span> {pct(r.transfer_overhead_pct)} of Optimized total
                                   </p>
+                                  {(r.standard_ms ?? r.naive_ms) != null && (r.optimized_ms ?? r.reduced_ms ?? r.total_ms) != null &&
+                                    (r.standard_ms ?? r.naive_ms) !== stdMs && (
+                                    <p
+                                      className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-xl p-2"
+                                      title="Recorded alternate line for this run"
+                                    >
+                                      <span className="font-extrabold">Alternate line:</span>{' '}
+                                      Standard {fmtMs(r.standard_ms ?? r.naive_ms)} vs Optimized {fmtMs(r.optimized_ms ?? r.reduced_ms ?? r.total_ms)} →{' '}
+                                      <span className="font-extrabold">{r.speedup}×</span>
+                                    </p>
+                                  )}
                                   {r.best && r.best.speedup != null && (
                                     <div className="mt-2 pt-2 border-t border-slate-100">
                                       <span className="font-bold text-slate-800">Dynamic Best Order ({prettyOrder(r.best.order)}):</span>
@@ -1633,13 +1475,13 @@ const PtLogPage = ({ onToast }) => {
                                   </p>
                                   {r.worst_case && r.worst_case.speedup != null && (
                                     <div className="mt-2 pt-2 border-t border-slate-100">
-                                      <span className="font-bold text-slate-800">Catalog Query Reference (Unfiltered):</span>
+                                      <span className="font-bold text-slate-800">Catalog Query Reference (Unfiltered, disabled by default):</span>
                                       <div className="text-[11px] text-slate-600 mt-0.5">
                                         Standard {fmtMs(r.worst_case.standard_ms ?? r.worst_case.naive_ms)} vs Optimized {fmtMs(r.worst_case.optimized_ms ?? r.worst_case.reduced_ms)} →{' '}
                                         <span className="font-extrabold text-indigo-700">{r.worst_case.speedup}× Speedup</span>
                                       </div>
                                       <p className="text-[10px] text-slate-400 mt-1">
-                                        Without the user search filter on the first relation, Standard MongoDB pays the full-catalog penalty.
+                                        Without the user search filter, Standard MongoDB pays the full-catalog left-deep join penalty on this pinned order.
                                       </p>
                                     </div>
                                   )}
