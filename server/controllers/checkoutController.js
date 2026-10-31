@@ -3,8 +3,12 @@ const Order = require('../models/Order');
 const Product = require('../models/Product');
 const Cart = require('../models/Cart');
 const User = require('../models/User');
+const { checkTransactionSupport } = require('../utils/dbSupport');
 
-// @desc    Process Multi-Vendor Order Checkout using MongoDB ACID Transaction
+// @desc    Process Multi-Vendor Order Checkout
+//          Uses MongoDB Multi-Document ACID Transactions on Replica Sets.
+//          Gracefully falls back to a 2-phase Sequential Execution with Compensating
+//          Rollbacks on Standalone MongoDB instances (never falsely claiming ACID guarantees).
 // @route   POST /api/checkout
 const processCheckout = async (req, res) => {
   const { shippingAddress, paymentMethod = 'Card' } = req.body;
@@ -26,25 +30,47 @@ const processCheckout = async (req, res) => {
   }
 
   let session = null;
-  let isTransactionSupported = true;
+  const isTransactionSupported = checkTransactionSupport();
 
-  try {
-    session = await mongoose.startSession();
-    session.startTransaction();
-  } catch (err) {
-    // Fallback for local MongoDB standalone instances without replica sets
-    isTransactionSupported = false;
-    session = null;
-    console.log('[ShopSphere Checkout] Standalone MongoDB detected: Running safe transactional execution without replica set session.');
+  if (isTransactionSupported) {
+    try {
+      session = await mongoose.startSession();
+      session.startTransaction();
+    } catch (sessionErr) {
+      console.warn('[ShopSphere Checkout] Failed to start MongoDB session transaction:', sessionErr.message);
+      session = null;
+    }
+  } else {
+    console.log('[ShopSphere Checkout] Standalone MongoDB detected: Running sequential execution protected by compensating rollbacks.');
   }
 
+  // Stack of compensating rollback actions for standalone sequential execution
+  const compensationStack = [];
+
   try {
+    // PRE-VALIDATION PASS:
+    // Before executing any mutations in sequential fallback mode, verify all products exist and have sufficient stock.
+    for (const item of cart.items) {
+      const prodCheck = isTransactionSupported && session
+        ? await Product.findById(item.product).session(session)
+        : await Product.findById(item.product);
+
+      if (!prodCheck) {
+        throw new Error(`Product not found or has been removed from marketplace.`);
+      }
+
+      if (prodCheck.stock < item.quantity) {
+        throw new Error(
+          `Insufficient stock for "${prodCheck.name}". Requested: ${item.quantity}, Available: ${prodCheck.stock}`
+        );
+      }
+    }
+
+    // MUTATION PASS:
     const orderItems = [];
     let subtotalAmount = 0;
 
-    // Process each cart item with authoritative database check
     for (const item of cart.items) {
-      // 2. Retrieve actual product from MongoDB (inside transaction if supported)
       let product;
       if (isTransactionSupported && session) {
         product = await Product.findById(item.product).session(session);
@@ -56,19 +82,17 @@ const processCheckout = async (req, res) => {
         throw new Error(`Product not found or has been removed from marketplace.`);
       }
 
-      // 3 & 4. Verify availability and stock
       if (product.stock < item.quantity) {
         throw new Error(
           `Insufficient stock for "${product.name}". Requested: ${item.quantity}, Available: ${product.stock}`
         );
       }
 
-      // 5. Use database price, NOT frontend price
       const actualUnitPrice = product.discountPrice > 0 ? product.discountPrice : product.price;
       const itemSubtotal = actualUnitPrice * item.quantity;
       subtotalAmount += itemSubtotal;
 
-      // 6. Deduct inventory & increase soldCount
+      // Deduct inventory & increase soldCount
       product.stock -= item.quantity;
       product.soldCount += item.quantity;
 
@@ -76,9 +100,16 @@ const processCheckout = async (req, res) => {
         await product.save({ session });
       } else {
         await product.save();
+        // Register compensating action to revert inventory if subsequent steps fail
+        const productId = product._id;
+        const qty = item.quantity;
+        compensationStack.push(async () => {
+          await Product.findByIdAndUpdate(productId, {
+            $inc: { stock: qty, soldCount: -qty }
+          });
+        });
       }
 
-      // 8 & 9. Associate order item with Vendor
       orderItems.push({
         product: product._id,
         vendor: product.vendor,
@@ -89,12 +120,12 @@ const processCheckout = async (req, res) => {
       });
     }
 
-    // 10. Calculate totals (Tax + Shipping)
+    // Totals (Tax + Shipping)
     const shippingFee = subtotalAmount > 1000 ? 0 : 99;
     const taxFee = Math.round(subtotalAmount * 0.18);
     const finalTotal = subtotalAmount + shippingFee + taxFee;
 
-    // 7. Create the multi-vendor Order document
+    // Create Multi-Vendor Order
     let order;
     const orderData = {
       customer: customer._id,
@@ -116,15 +147,21 @@ const processCheckout = async (req, res) => {
       const createdOrders = await Order.create([orderData], { session });
       order = createdOrders[0];
 
-      // 11. Clear the customer cart inside transaction
+      // Clear customer cart inside transaction
       cart.items = [];
       await cart.save({ session });
 
-      // 12. Commit transaction
+      // Commit transaction
       await session.commitTransaction();
       session.endSession();
+      session = null;
     } else {
       order = await Order.create(orderData);
+      // If cart.save fails in standalone mode, delete the created order as compensation
+      compensationStack.push(async () => {
+        await Order.findByIdAndDelete(order._id);
+      });
+
       cart.items = [];
       await cart.save();
     }
@@ -133,22 +170,51 @@ const processCheckout = async (req, res) => {
       .populate('items.product', 'name images')
       .populate('items.vendor', 'storeName storeSlug');
 
+    const transactionStatus = isTransactionSupported
+      ? 'COMMITTED_REPLICA_SET_ACID'
+      : 'COMMITTED_STANDALONE_SEQUENTIAL';
+
+    const message = isTransactionSupported
+      ? 'Checkout completed successfully via MongoDB Multi-Document ACID Transaction!'
+      : 'Checkout completed successfully via Sequential Execution (Compensating Rollback Protected)!';
+
     return res.status(201).json({
-      message: 'Checkout completed successfully via ACID Transaction!',
-      transactionStatus: isTransactionSupported ? 'COMMITTED_SESSION_TRANSACTION' : 'COMMITTED_SAFE_TRANSACTION',
+      message,
+      transactionStatus,
+      isAcidReplicaSet: isTransactionSupported,
       order: populatedOrder
     });
   } catch (error) {
-    // If anything fails: abort transaction
+    // If anything fails: abort replica set transaction OR execute compensating rollback for standalone
     if (isTransactionSupported && session) {
-      await session.abortTransaction();
-      session.endSession();
+      try {
+        await session.abortTransaction();
+      } catch (abortErr) {
+        console.error('[ShopSphere Transaction Abort Error]:', abortErr.message);
+      } finally {
+        try {
+          session.endSession();
+        } catch (_) {}
+        session = null;
+      }
+    } else if (compensationStack.length > 0) {
+      console.warn(`[ShopSphere Standalone Rollback] Triggering ${compensationStack.length} compensating actions...`);
+      for (const compensate of compensationStack.reverse()) {
+        try {
+          await compensate();
+        } catch (compErr) {
+          console.error('[ShopSphere Compensation Action Failed]:', compErr.message);
+        }
+      }
     }
-    console.error('[ShopSphere Transaction Aborted]:', error.message);
+
+    console.error('[ShopSphere Checkout Aborted]:', error.message);
     return res.status(400).json({
-      message: `Checkout failed & transaction aborted: ${error.message}`
+      message: `Checkout failed & transaction aborted: ${error.message}`,
+      transactionStatus: isTransactionSupported ? 'ABORTED_REPLICA_SET_ACID' : 'ROLLED_BACK_STANDALONE_SEQUENTIAL',
+      isAcidReplicaSet: isTransactionSupported
     });
   }
 };
 
-module.exports = { processCheckout };
+module.exports = { processCheckout, checkTransactionSupport };
