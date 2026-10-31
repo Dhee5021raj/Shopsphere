@@ -1,49 +1,7 @@
 const Cart = require('../models/Cart');
 const GuestCart = require('../models/GuestCart');
 const Product = require('../models/Product');
-
-// Helper to calculate cart totals and populate items
-const populateCartItems = async (items) => {
-  const populatedItems = [];
-  let subtotal = 0;
-
-  for (const item of items) {
-    const product = await Product.findById(item.product)
-      .populate('category', 'name slug')
-      .populate('vendor', 'storeName storeSlug logo');
-
-    if (product) {
-      const price = product.discountPrice > 0 ? product.discountPrice : product.price;
-      const itemTotal = price * item.quantity;
-      subtotal += itemTotal;
-
-      populatedItems.push({
-        _id: item._id,
-        product: {
-          _id: product._id,
-          name: product.name,
-          price: product.price,
-          discountPrice: product.discountPrice,
-          effectivePrice: price,
-          images: product.images,
-          stock: product.stock,
-          category: product.category,
-          vendor: product.vendor
-        },
-        vendor: product.vendor,
-        quantity: Math.min(item.quantity, product.stock),
-        priceAtAdd: price,
-        itemTotal
-      });
-    }
-  }
-
-  const shipping = subtotal > 1000 || subtotal === 0 ? 0 : 99;
-  const tax = Math.round(subtotal * 0.18); // 18% GST/Tax
-  const total = subtotal + shipping + tax;
-
-  return { items: populatedItems, subtotal, shipping, tax, total };
-};
+const { purgeOrphanedCartItems, populateCartItems } = require('../services/cartService');
 
 // @desc    Get user or guest cart
 // @route   GET /api/cart
@@ -54,6 +12,7 @@ const getCart = async (req, res) => {
       if (!cart) {
         cart = await Cart.create({ user: req.user._id, items: [] });
       }
+      await purgeOrphanedCartItems(cart, false);
       const cartData = await populateCartItems(cart.items);
       return res.json(cartData);
     } else {
@@ -65,6 +24,7 @@ const getCart = async (req, res) => {
       if (!guestCart) {
         guestCart = await GuestCart.create({ sessionId, items: [] });
       }
+      await purgeOrphanedCartItems(guestCart, true);
       const cartData = await populateCartItems(guestCart.items);
       return res.json(cartData);
     }
@@ -95,6 +55,7 @@ const addToCart = async (req, res) => {
       if (!cart) {
         cart = await Cart.create({ user: req.user._id, items: [] });
       }
+      await purgeOrphanedCartItems(cart, false);
 
       const existingIndex = cart.items.findIndex(
         (i) => i.product.toString() === productId
@@ -131,6 +92,7 @@ const addToCart = async (req, res) => {
       if (!guestCart) {
         guestCart = await GuestCart.create({ sessionId, items: [] });
       }
+      await purgeOrphanedCartItems(guestCart, true);
 
       const existingIndex = guestCart.items.findIndex(
         (i) => i.product.toString() === productId
@@ -182,6 +144,7 @@ const updateCartItem = async (req, res) => {
     if (req.user) {
       const cart = await Cart.findOne({ user: req.user._id });
       if (!cart) return res.status(404).json({ message: 'Cart not found' });
+      await purgeOrphanedCartItems(cart, false);
 
       if (qty <= 0) {
         cart.items = cart.items.filter((i) => i.product.toString() !== productId);
@@ -197,6 +160,7 @@ const updateCartItem = async (req, res) => {
       const sessionId = req.headers['x-session-id'];
       const guestCart = await GuestCart.findOne({ sessionId });
       if (!guestCart) return res.status(404).json({ message: 'Guest cart not found' });
+      await purgeOrphanedCartItems(guestCart, true);
 
       if (qty <= 0) {
         guestCart.items = guestCart.items.filter((i) => i.product.toString() !== productId);
@@ -223,6 +187,7 @@ const removeFromCart = async (req, res) => {
     if (req.user) {
       const cart = await Cart.findOne({ user: req.user._id });
       if (cart) {
+        await purgeOrphanedCartItems(cart, false);
         cart.items = cart.items.filter((i) => i.product.toString() !== productId);
         await cart.save();
         const updated = await populateCartItems(cart.items);
@@ -232,6 +197,7 @@ const removeFromCart = async (req, res) => {
       const sessionId = req.headers['x-session-id'];
       const guestCart = await GuestCart.findOne({ sessionId });
       if (guestCart) {
+        await purgeOrphanedCartItems(guestCart, true);
         guestCart.items = guestCart.items.filter((i) => i.product.toString() !== productId);
         await guestCart.save();
         const updated = await populateCartItems(guestCart.items);
@@ -254,16 +220,19 @@ const syncGuestCart = async (req, res) => {
     }
 
     const guestCart = await GuestCart.findOne({ sessionId });
-    if (!guestCart || guestCart.items.length === 0) {
-      const userCart = await Cart.findOne({ user: req.user._id });
-      const updated = await populateCartItems(userCart ? userCart.items : []);
-      return res.json(updated);
-    }
-
     let userCart = await Cart.findOne({ user: req.user._id });
     if (!userCart) {
       userCart = await Cart.create({ user: req.user._id, items: [] });
     }
+
+    await purgeOrphanedCartItems(userCart, false);
+
+    if (!guestCart || guestCart.items.length === 0) {
+      const updated = await populateCartItems(userCart ? userCart.items : []);
+      return res.json(updated);
+    }
+
+    await purgeOrphanedCartItems(guestCart, true);
 
     for (const gItem of guestCart.items) {
       const existingIndex = userCart.items.findIndex(

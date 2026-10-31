@@ -4,6 +4,7 @@ const Product = require('../models/Product');
 const Cart = require('../models/Cart');
 const User = require('../models/User');
 const { checkTransactionSupport } = require('../utils/dbSupport');
+const { purgeOrphanedCartItems } = require('../services/cartService');
 
 // @desc    Process Multi-Vendor Order Checkout
 //          Uses MongoDB Multi-Document ACID Transactions on Replica Sets.
@@ -27,6 +28,19 @@ const processCheckout = async (req, res) => {
   const cart = await Cart.findOne({ user: req.user._id });
   if (!cart || cart.items.length === 0) {
     return res.status(400).json({ message: 'Your cart is empty' });
+  }
+
+  // Atomically purge any orphaned/deleted products before transaction execution
+  const { hasOrphans } = await purgeOrphanedCartItems(cart, false);
+  if (cart.items.length === 0) {
+    return res.status(400).json({
+      message: 'Your cart contained items that are no longer available and have been removed. Your cart is now empty.'
+    });
+  }
+  if (hasOrphans) {
+    return res.status(400).json({
+      message: 'One or more items in your cart are no longer available and have been removed. Please review your cart before checking out.'
+    });
   }
 
   let session = null;
@@ -56,6 +70,10 @@ const processCheckout = async (req, res) => {
         : await Product.findById(item.product);
 
       if (!prodCheck) {
+        await Cart.updateOne(
+          { _id: cart._id },
+          { $pull: { items: { product: item.product } } }
+        );
         throw new Error(`Product not found or has been removed from marketplace.`);
       }
 
@@ -79,6 +97,10 @@ const processCheckout = async (req, res) => {
       }
 
       if (!product) {
+        await Cart.updateOne(
+          { _id: cart._id },
+          { $pull: { items: { product: item.product } } }
+        );
         throw new Error(`Product not found or has been removed from marketplace.`);
       }
 
