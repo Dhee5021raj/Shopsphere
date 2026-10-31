@@ -91,25 +91,51 @@ const purgeOrphanedCartItems = async (cartDoc, isGuest = false) => {
 
 /**
  * Calculates cart totals and populates items with complete product, vendor, and category details.
+ * Eliminates N+1 query overhead by executing a single batched Product.find({ _id: { $in: productIds } })
+ * and indexing results in a Map for O(1) in-memory resolution.
  * Preserves exact frontend response format.
  *
  * @param {Array} items - Cart items
  * @returns {Promise<{ items: Array, subtotal: number, shipping: number, tax: number, total: number }>}
  */
 const populateCartItems = async (items) => {
-  const populatedItems = [];
-  let subtotal = 0;
-
   if (!Array.isArray(items) || items.length === 0) {
     return { items: [], subtotal: 0, shipping: 0, tax: 0, total: 0 };
   }
 
+  // 1. Collect unique valid product IDs for batched retrieval
+  const productIds = [];
+  for (const item of items) {
+    if (item && item.product) {
+      const pid = item.product._id ? item.product._id : item.product;
+      productIds.push(pid);
+    }
+  }
+
+  if (productIds.length === 0) {
+    return { items: [], subtotal: 0, shipping: 0, tax: 0, total: 0 };
+  }
+
+  // 2. Single batched query replacing sequential N queries (N+1 query elimination)
+  const products = await Product.find({ _id: { $in: productIds } })
+    .populate('category', 'name slug')
+    .populate('vendor', 'storeName storeSlug logo');
+
+  // 3. Map for O(1) product lookups
+  const productMap = new Map();
+  for (const prod of products) {
+    productMap.set(prod._id.toString(), prod);
+  }
+
+  // 4. Assemble populated items in the original cart item order
+  const populatedItems = [];
+  let subtotal = 0;
+
   for (const item of items) {
     if (!item || !item.product) continue;
 
-    const product = await Product.findById(item.product)
-      .populate('category', 'name slug')
-      .populate('vendor', 'storeName storeSlug logo');
+    const pidStr = (item.product._id ? item.product._id : item.product).toString();
+    const product = productMap.get(pidStr);
 
     if (product) {
       const price = product.discountPrice > 0 ? product.discountPrice : product.price;

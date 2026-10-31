@@ -234,14 +234,32 @@ const syncGuestCart = async (req, res) => {
 
     await purgeOrphanedCartItems(guestCart, true);
 
+    // Look up stock for all items being merged in a single batched query
+    const allProdIds = guestCart.items.map((i) => i.product);
+    const products = await Product.find({ _id: { $in: allProdIds } }).select('_id stock');
+    const stockMap = new Map();
+    for (const p of products) {
+      stockMap.set(p._id.toString(), p.stock);
+    }
+
     for (const gItem of guestCart.items) {
+      const prodIdStr = gItem.product.toString();
+      const availableStock = stockMap.has(prodIdStr) ? stockMap.get(prodIdStr) : Infinity;
+
       const existingIndex = userCart.items.findIndex(
-        (i) => i.product.toString() === gItem.product.toString()
+        (i) => i.product.toString() === prodIdStr
       );
+
       if (existingIndex > -1) {
-        userCart.items[existingIndex].quantity += gItem.quantity;
+        const mergedQty = userCart.items[existingIndex].quantity + gItem.quantity;
+        userCart.items[existingIndex].quantity = Math.min(mergedQty, availableStock);
       } else {
-        userCart.items.push(gItem);
+        userCart.items.push({
+          product: gItem.product,
+          vendor: gItem.vendor,
+          quantity: Math.min(gItem.quantity, availableStock),
+          priceAtAdd: gItem.priceAtAdd
+        });
       }
     }
 

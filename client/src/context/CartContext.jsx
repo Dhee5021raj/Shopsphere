@@ -21,26 +21,53 @@ export const CartProvider = ({ children }) => {
     }
   };
 
+  // Coordinated Cart Initialization:
+  // Merges guest cart upon login before displaying authenticated cart.
+  // Replaces the competing separate useEffect hooks to eliminate race conditions.
   useEffect(() => {
-    fetchCart();
-  }, [user]);
+    let isCancelled = false;
 
-  // Sync guest cart upon user login
-  useEffect(() => {
-    const sync = async () => {
-      if (user) {
-        const guestSession = localStorage.getItem('shopsphere_guest_session');
-        if (guestSession) {
-          try {
-            const { data } = await api.post('/cart/sync', { sessionId: guestSession });
-            setCart(data);
-          } catch (err) {
-            console.error('Error syncing guest cart:', err);
+    const initializeCart = async () => {
+      setLoading(true);
+      try {
+        if (user) {
+          const guestSession = localStorage.getItem('shopsphere_guest_session');
+          if (guestSession) {
+            try {
+              // 1. Synchronize guest cart into authenticated user cart
+              const { data } = await api.post('/cart/sync', { sessionId: guestSession });
+              if (!isCancelled) {
+                setCart(data);
+                // 2. Clear guest session ONLY after successful synchronization
+                localStorage.removeItem('shopsphere_guest_session');
+              }
+              return; // Sync returns the fully populated updated cart; no separate fetch needed
+            } catch (syncErr) {
+              console.error('Error syncing guest cart:', syncErr);
+              // Preserve guest session on error so cart contents are not lost and can be retried
+            }
           }
+        }
+
+        // 3. If no guest session or if sync encountered an error, fetch authenticated/guest cart directly
+        const { data } = await api.get('/cart');
+        if (!isCancelled) {
+          setCart(data);
+        }
+      } catch (error) {
+        console.error('Error fetching cart:', error);
+      } finally {
+        if (!isCancelled) {
+          setLoading(false);
         }
       }
     };
-    sync();
+
+    initializeCart();
+
+    return () => {
+      isCancelled = true;
+    };
   }, [user]);
 
   const addToCart = async (productId, quantity = 1) => {
