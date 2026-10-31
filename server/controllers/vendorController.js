@@ -1,6 +1,7 @@
 const Vendor = require('../models/Vendor');
 const Product = require('../models/Product');
 const Order = require('../models/Order');
+const inventoryService = require('../services/inventoryService');
 
 // @desc    Get all public approved vendors
 // @route   GET /api/vendors
@@ -124,6 +125,20 @@ const updateVendorOrderItemStatus = async (req, res) => {
     const { orderId, itemId } = req.params;
     const { status } = req.body;
 
+    if (status === 'Cancelled') {
+      const result = await inventoryService.cancelVendorOrderItem({
+        orderId,
+        itemId,
+        vendorUserId: req.user._id
+      });
+      return res.json({
+        message: 'Order item status updated successfully',
+        item: result.item,
+        order: result.order,
+        executionMode: result.executionMode
+      });
+    }
+
     const vendor = await Vendor.findOne({ user: req.user._id });
     if (!vendor) {
       return res.status(404).json({ message: 'Vendor profile not found' });
@@ -132,6 +147,10 @@ const updateVendorOrderItemStatus = async (req, res) => {
     const order = await Order.findById(orderId);
     if (!order) {
       return res.status(404).json({ message: 'Order not found' });
+    }
+
+    if (order.orderStatus === 'Cancelled') {
+      return res.status(400).json({ message: 'Cannot update item in an order that is already Cancelled' });
     }
 
     const item = order.items.id(itemId);
@@ -144,12 +163,17 @@ const updateVendorOrderItemStatus = async (req, res) => {
       return res.status(403).json({ message: 'Unauthorized: Item does not belong to your store' });
     }
 
+    if (item.status === 'Cancelled') {
+      return res.status(400).json({ message: 'Cannot update status of a cancelled item' });
+    }
+
     item.status = status;
     await order.save();
 
     res.json({ message: 'Order item status updated successfully', item });
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    const errStatus = error.statusCode || error.status || 500;
+    res.status(errStatus).json({ message: error.message });
   }
 };
 

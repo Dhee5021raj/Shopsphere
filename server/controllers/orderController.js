@@ -1,4 +1,5 @@
 const Order = require('../models/Order');
+const inventoryService = require('../services/inventoryService');
 
 // @desc    Get customer orders
 // @route   GET /api/orders/my-orders
@@ -46,28 +47,18 @@ const getOrderById = async (req, res) => {
 // @route   PUT /api/orders/:id/cancel
 const cancelOrder = async (req, res) => {
   try {
-    const order = await Order.findById(req.params.id);
-    if (!order) {
-      return res.status(404).json({ message: 'Order not found' });
-    }
-
-    if (order.customer.toString() !== req.user._id.toString()) {
-      return res.status(403).json({ message: 'Not authorized to cancel this order' });
-    }
-
-    if (order.orderStatus === 'Shipped' || order.orderStatus === 'Delivered') {
-      return res.status(400).json({ message: `Cannot cancel order that is already ${order.orderStatus}` });
-    }
-
-    order.orderStatus = 'Cancelled';
-    order.items.forEach(item => {
-      item.status = 'Cancelled';
+    const result = await inventoryService.cancelCustomerOrder({
+      orderId: req.params.id,
+      userId: req.user._id
     });
-
-    await order.save();
-    res.json({ message: 'Order successfully cancelled', order });
+    res.json({
+      message: 'Order successfully cancelled',
+      order: result.order,
+      executionMode: result.executionMode
+    });
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    const status = error.statusCode || error.status || 500;
+    res.status(status).json({ message: error.message });
   }
 };
 

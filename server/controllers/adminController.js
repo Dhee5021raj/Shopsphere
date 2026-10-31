@@ -4,6 +4,7 @@ const User = require('../models/User');
 const Vendor = require('../models/Vendor');
 const Product = require('../models/Product');
 const Order = require('../models/Order');
+const inventoryService = require('../services/inventoryService');
 const { byName: specByName } = require('../pt/specs');
 
 // @desc    Get all users
@@ -91,21 +92,39 @@ const getAllOrdersAdmin = async (req, res) => {
 const updateOrderStatusAdmin = async (req, res) => {
   try {
     const { orderStatus } = req.body;
-    const order = await Order.findById(req.params.id);
+    const orderId = req.params.id;
+
+    if (orderStatus === 'Cancelled') {
+      const result = await inventoryService.cancelAdminOrder({ orderId });
+      return res.json({
+        message: 'Order status updated successfully',
+        order: result.order,
+        executionMode: result.executionMode
+      });
+    }
+
+    const order = await Order.findById(orderId);
     if (!order) return res.status(404).json({ message: 'Order not found' });
+
+    if (order.orderStatus === 'Cancelled') {
+      return res.status(400).json({ message: 'Cannot change status of an order that is already Cancelled' });
+    }
 
     order.orderStatus = orderStatus;
     if (orderStatus === 'Delivered') {
       order.paymentStatus = 'Paid';
       order.items.forEach(item => {
-        item.status = 'Delivered';
+        if (item.status !== 'Cancelled') {
+          item.status = 'Delivered';
+        }
       });
     }
 
     await order.save();
     res.json({ message: 'Order status updated successfully', order });
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    const status = error.statusCode || error.status || 500;
+    res.status(status).json({ message: error.message });
   }
 };
 
