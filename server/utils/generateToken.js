@@ -1,7 +1,8 @@
 const jwt = require('jsonwebtoken');
+const { getJwtSecret } = require('../config/jwt');
 
 const generateToken = (id) => {
-  return jwt.sign({ id }, process.env.JWT_SECRET || 'shopsphere_super_secret_jwt_key_2026_viva_proof', {
+  return jwt.sign({ id }, getJwtSecret(), {
     expiresIn: '30d'
   });
 };

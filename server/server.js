@@ -2,9 +2,13 @@ const express = require('express');
 const cors = require('cors');
 const dotenv = require('dotenv');
 const connectDB = require('./config/db');
+const { validateJwtConfig } = require('./config/jwt');
 const errorHandler = require('./middleware/errorHandler');
 
 dotenv.config();
+
+// Validate required security configuration at startup
+validateJwtConfig();
 
 // Connect to MongoDB Database
 connectDB();

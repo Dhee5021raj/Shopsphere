@@ -10,13 +10,14 @@ const {
   syncGuestCart
 } = require('../controllers/cartController');
 const { protect } = require('../middleware/authMiddleware');
+const { getJwtSecret } = require('../config/jwt');
 
 // Middleware to optionally attach req.user if Bearer token is provided
 const optionalAuth = async (req, res, next) => {
   if (req.headers.authorization && req.headers.authorization.startsWith('Bearer')) {
     try {
       const token = req.headers.authorization.split(' ')[1];
-      const decoded = jwt.verify(token, process.env.JWT_SECRET || 'shopsphere_super_secret_jwt_key_2026_viva_proof');
+      const decoded = jwt.verify(token, getJwtSecret());
       req.user = await User.findById(decoded.id).select('-password');
     } catch (error) {
       // Ignore token failure for guest cart

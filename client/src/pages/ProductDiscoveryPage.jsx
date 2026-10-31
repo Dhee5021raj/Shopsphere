@@ -6,6 +6,7 @@ import ProductCard from '../components/ProductCard';
 import FilterSidebar from '../components/FilterSidebar';
 import SearchBar from '../components/SearchBar';
 import { ProductSkeleton } from '../components/SkeletonLoader';
+import { useAuth } from '../context/AuthContext';
 
 // Live shadow-comparison badge (Step 7): the benchmark NEVER runs inside the
 // visible UI — it fires detached after your search finishes so it can never
@@ -14,22 +15,51 @@ import { ProductSkeleton } from '../components/SkeletonLoader';
 // while a comparison is running, and links straight to /admin/pt-log.
 // Hidden automatically for non-admin viewers (the status endpoint is admin-only).
 function ShadowStatusBadge() {
+  const { user, isAdmin } = useAuth();
   const [st, setSt] = useState(null); // null = unknown / no access → hide
 
   useEffect(() => {
+    // 1. Guard: Only authenticated admins are permitted to poll the admin PT status endpoint
+    if (!user || !isAdmin) {
+      setSt(null);
+      return;
+    }
+
     let alive = true;
+    let timerId = null;
+
     const load = async () => {
       try {
         const { data } = await api.get('/admin/pt-status');
-        if (alive) setSt(data && typeof data === 'object' ? data : { running: false });
+        if (alive) {
+          setSt(data && typeof data === 'object' ? data : { running: false });
+        }
       } catch (err) {
-        if (alive) setSt(null);
+        if (!alive) return;
+        setSt(null);
+        // 4. Stop polling immediately after 401 (Unauthorized) or 403 (Forbidden)
+        const status = err.response?.status;
+        if (status === 401 || status === 403) {
+          if (timerId) {
+            clearInterval(timerId);
+            timerId = null;
+          }
+        }
       }
     };
+
     load();
-    const id = setInterval(load, 4000);
-    return () => { alive = false; clearInterval(id); };
-  }, []);
+    timerId = setInterval(load, 4000);
+
+    // 3. Clear polling interval on unmount
+    return () => {
+      alive = false;
+      if (timerId) {
+        clearInterval(timerId);
+        timerId = null;
+      }
+    };
+  }, [user, isAdmin]);
 
   if (!st) return null;
   const elapsed = st.startedAt ? Math.max(0, Math.round((Date.now() - new Date(st.startedAt).getTime()) / 1000)) : null;
@@ -59,6 +89,7 @@ function ShadowStatusBadge() {
 }
 
 const ProductDiscoveryPage = ({ onToast }) => {
+  const { isAdmin } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
 
   const [products, setProducts] = useState([]);
@@ -271,7 +302,7 @@ const ProductDiscoveryPage = ({ onToast }) => {
 
       </div>
 
-      <ShadowStatusBadge />
+      {isAdmin && <ShadowStatusBadge />}
     </div>
   );
 };
